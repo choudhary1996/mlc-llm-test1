@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-mlc-llm:
+  build:
+    name: Build mlc_llm from source
     runs-on: ubuntu-latest
 
     defaults:
@@ -16,77 +17,84 @@ jobs:
         shell: bash -l {0}
 
     steps:
-    # 1️⃣ Checkout repo (if this workflow lives in another repo)
+
+    # 1️⃣ Checkout THIS repository (mlc-llm or your fork)
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        submodules: recursive   # Pulls 3rdparty/tvm automatically
 
     # 2️⃣ Setup Conda
     - name: Setup Miniconda
       uses: conda-incubator/setup-miniconda@v3
       with:
         auto-update-conda: true
-        python-version: 3.13
-        activate-environment: mlc-chat-venv
-        environment-file: ""
         auto-activate-base: false
+        activate-environment: mlc-chat-venv
+        python-version: 3.13
 
-    # 3️⃣ Install build dependencies
-    - name: Install build dependencies
+    # 3️⃣ Create fresh build environment
+    - name: Create build environment
       run: |
         conda create -y -n mlc-chat-venv -c conda-forge \
           "cmake>=3.24" \
           rust \
           git \
           python=3.13
+
         conda activate mlc-chat-venv
 
-        # Verify tools
+        echo "=== Tool Versions ==="
         cmake --version
         rustc --version
-        git --version
         python --version
+        git --version
 
-    # 4️⃣ Clone mlc-llm source
-    - name: Clone MLC LLM
-      run: |
-        git clone --recursive https://github.com/mlc-ai/mlc-llm.git
-        cd mlc-llm
-
-    # 5️⃣ Configure build
+    # 4️⃣ Configure build (non-interactive)
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
-        cd mlc-llm
+
         mkdir -p build
         cd build
-        python ../cmake/gen_cmake_config.py
 
-    # 6️⃣ Build libraries
+        # Fix interactive prompt (uses bundled 3rdparty/tvm)
+        echo "" | python ../cmake/gen_cmake_config.py
+
+    # 5️⃣ Build runtime libraries
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
-        cd mlc-llm/build
+        cd build
+
         cmake ..
         make -j$(nproc)
 
-    # 7️⃣ Install Python package
+    # 6️⃣ Install Python package
     - name: Install mlc_llm Python package
       run: |
         conda activate mlc-chat-venv
-        cd mlc-llm/python
+        cd python
+
         pip install -e .
 
-    # 8️⃣ Validate installation
-    - name: Validate build artifacts
+    # 7️⃣ Validate installation
+    - name: Validate build
       run: |
         conda activate mlc-chat-venv
-        cd mlc-llm
 
-        echo "Listing build artifacts:"
+        echo "=== Build artifacts ==="
         ls -l ./build/ | grep -E "libmlc_llm|libtvm_runtime" || true
 
-        echo "Checking CLI help:"
+        echo "=== CLI Help ==="
         mlc_llm chat -h
 
-        echo "Python import test:"
+        echo "=== Python Import Test ==="
         python -c "import mlc_llm; print(mlc_llm)"
+
+    # 8️⃣ Upload compiled artifacts (optional)
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlc-llm-build
+        path: build/
