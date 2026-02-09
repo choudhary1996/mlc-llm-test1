@@ -49,3 +49,50 @@ jobs:
         rustc --version
         python --version
         git --version
+
+    # 4️⃣ Generate CMake config (FULLY non-interactive)
+    - name: Generate CMake config
+      run: |
+        conda activate mlc-chat-venv
+
+        mkdir -p build
+        cd build
+
+        # Answers:
+        # TVM path → default
+        # CUDA → n
+        # Metal → n
+        # Vulkan → n
+        printf "\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+
+    # 5️⃣ Build runtime libraries
+    - name: Build mlc_llm runtime
+      run: |
+        conda activate mlc-chat-venv
+        cd build
+
+        cmake ..
+        make -j$(nproc)
+
+    # 6️⃣ Install Python package
+    - name: Install mlc_llm Python package
+      run: |
+        conda activate mlc-chat-venv
+        cd python
+
+        pip install -e .
+
+    # 7️⃣ Validate installation
+    - name: Validate build
+      run: |
+        conda activate mlc-chat-venv
+
+        echo "=== Build artifacts ==="
+        ls -l ./build/ | grep -E "libmlc_llm|libtvm_runtime" || true
+
+        echo "=== CLI test ==="
+        mlc_llm chat -h
+
+        echo "=== Python import test ==="
+        python -c "import mlc_llm; print(mlc_llm)"
+
