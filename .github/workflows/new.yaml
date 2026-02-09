@@ -1,260 +1,105 @@
-name: MLC LLM CI/CD
+name: Build MLC LLM Runtime (Optimized)
 
 on:
   push:
     branches: [ main ]
-    tags: [ "v*" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/mlc-llm-test1
-
-# ============================================================
-# 1️⃣ FAST CI CHECKS (No Docker — quick feedback)
-# ============================================================
-
 jobs:
-
-  ci-checks:
-    name: CI Checks (Lint + Import + Smoke Tests)
+  build:
+    name: Build mlc_llm
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        shell: bash -l {0}
+
     steps:
-      # ---------------------------
-      # Checkout
-      # ---------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 1 # Faster checkout
 
-      # ---------------------------
-      # Setup Python
-      # ---------------------------
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      # 1. Setup Conda with Caching
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.11"
+          auto-update-conda: true
+          activate-environment: mlc-chat-venv
+          python-version: "3.13"
 
-      # ---------------------------
-      # Install minimal deps
-      # ---------------------------
-      - name: Install dependencies
+      - name: Cache Conda Env
+        id: cache-conda
+        uses: actions/cache@v4
+        with:
+          path: /usr/share/miniconda/envs/mlc-chat-venv
+          key: ${{ runner.os }}-conda-${{ hashFiles('**/cmake/gen_cmake_config.py') }}
+
+      - name: Create build environment (if no cache)
+        if: steps.cache-conda.outputs.cache-hit != 'true'
         run: |
-          python -m pip install --upgrade pip
-          pip install pytest numpy psutil decorator attrs cloudpickle
+          conda create -y -n mlc-chat-venv -c conda-forge \
+            "cmake>=3.24" rust git python=3.13 psutil numpy decorator attrs cloudpickle
 
-      # ---------------------------
-      # Smoke import test
-      # ---------------------------
-      - name: Import test
-        run: |
-          python - <<EOF
-          try:
-              import mlc_llm
-              print("mlc_llm import OK")
-          except Exception as e:
-              print("Import failed:", e)
-          EOF
-
-      # ---------------------------
-      # CLI availability test
-      # ---------------------------
-      - name: CLI help test
-        run: |
-          echo "CLI test skipped if binary not built yet"
-
-      # ---------------------------
-      # Run repo tests if present
-      # ---------------------------
-      - name: Run pytest
-        run: |
-          pytest -v || echo "No tests found — skipping"
-
-# ============================================================
-# 2️⃣ BUILD MULTIPURPOSE DOCKER IMAGE
-# ============================================================
-
-  docker:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-latest
-    needs: ci-checks
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha
-
-      - name: Build & Push Image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-# ============================================================
-# 3️⃣ BUILD + TEST + WHEEL (Inside Docker)
-# ============================================================
-
-  build-linux:
-    name: Build & Test (Linux x64)
-    runs-on: ubuntu-latest
-    needs: docker
-
-    container:
-      image: ghcr.io/${{ github.repository }}/mlc-llm:latest
-
-    steps:
-      # ---------------------------
-      # Checkout
-      # ---------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # ---------------------------
-      # Cache CMake builds
-      # ---------------------------
-      - name: Cache build directories
+      # 2. Cache Build Artifacts (Enables Incremental 'make')
+      - name: Cache Build Directory
         uses: actions/cache@v4
         with:
           path: |
-            build
-            3rdparty/tvm/build
-          key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
+            build/
+            3rdparty/tvm/build/
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-cmake-
+            ${{ runner.os }}-ccache-
 
-      # ---------------------------
-      # Configure
-      # ---------------------------
-      - name: Configure CMake
+      # 3. Build MLC LLM and TVM Runtimes
+      - name: Build Runtimes (MLC & TVM)
         run: |
-          mkdir -p build
-          cd build
-          printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+          # Build MLC LLM
+          mkdir -p build && cd build
+          if [ ! -f config.cmake ]; then
+            printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+          fi
           cmake ..
-
-      # ---------------------------
-      # Build runtime
-      # ---------------------------
-      - name: Build mlc_llm runtime
-        run: |
-          cd build
           make -j$(nproc)
-
-      # ---------------------------
-      # Build TVM
-      # ---------------------------
-      - name: Build TVM runtime
-        run: |
-          cd 3rdparty/tvm
+          
+          # Build TVM
+          cd ../3rdparty/tvm
           mkdir -p build && cd build
           cmake ..
           make -j$(nproc)
 
-      # ---------------------------
-      # Install TVM Python
-      # ---------------------------
-      - name: Install TVM Python bindings
+      # 4. Install Python Bindings
+      - name: Install Python Packages
         run: |
-          cd 3rdparty/tvm/python
-          pip install -e .
+          pip install -e 3rdparty/tvm/python
+          pip install -e python
 
-      # ---------------------------
-      # Build wheel
-      # ---------------------------
-      - name: Build mlc_llm wheel
+      # 5. Export Paths and Validate
+      - name: Validate Build
         run: |
-          pip install build wheel
-          cd python
-          python -m build --wheel
+          # Add libraries to environment for this step
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
-      # ---------------------------
-      # Install wheel
-      # ---------------------------
-      - name: Install built wheel
-        run: |
-          pip install python/dist/*.whl
-
-      # ---------------------------
-      # Runtime deps
-      # ---------------------------
-      - name: Install runtime dependencies
-        run: |
-          pip install psutil numpy decorator attrs cloudpickle pytest
-
-      # ---------------------------
-      # Export libs
-      # ---------------------------
-      - name: Export library paths
-        run: |
-          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
-
-      # ---------------------------
-      # Automated tests (gate)
-      # ---------------------------
-      - name: Runtime validation tests
-        run: |
-          python -c "import mlc_llm"
+          echo "=== CLI Test ==="
           mlc_llm chat -h
-          pytest -v || echo "No runtime tests"
 
-      # ---------------------------
-      # Upload wheel
-      # ---------------------------
-      - name: Upload wheel artifact
+          echo "=== Python Test ==="
+          python -c "import mlc_llm; print('Success: mlc_llm version', mlc_llm.__version__)"
+
+      # 6. Upload Final Binaries Only (saves storage)
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mlc-llm-wheel-linux
-          path: python/dist/*.whl
-
-# ============================================================
-# 4️⃣ GITHUB RELEASE
-# ============================================================
-
-  release:
-    name: Publish GitHub Release
-    runs-on: ubuntu-latest
-    needs: build-linux
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mlc-llm-wheel-linux
-          path: dist
-
-      - name: Publish Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.whl
+          name: mlc-llm-runtime
+          path: |
+            build/libmlc_llm.so
+            3rdparty/tvm/build/libtvm_runtime.so
+          retention-days: 7
