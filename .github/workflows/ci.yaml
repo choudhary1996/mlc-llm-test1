@@ -63,7 +63,9 @@ jobs:
         # CUDA → n
         # Metal → n
         # Vulkan → n
-        printf "\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+        printf "\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+
+
 
     # 5️⃣ Build runtime libraries
     - name: Build mlc_llm runtime
