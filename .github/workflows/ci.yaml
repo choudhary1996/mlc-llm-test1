@@ -9,7 +9,6 @@ on:
 
 jobs:
   build:
-    name: Build mlc_llm from source
     runs-on: ubuntu-latest
 
     defaults:
@@ -18,7 +17,7 @@ jobs:
 
     steps:
 
-    # 1️⃣ Checkout repo + submodules (TVM included)
+    # 1️⃣ Checkout repo + submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -33,7 +32,7 @@ jobs:
         activate-environment: mlc-chat-venv
         python-version: 3.13
 
-    # 3️⃣ Create build environment
+    # 3️⃣ Create build env
     - name: Create build environment
       run: |
         conda create -y -n mlc-chat-venv -c conda-forge \
@@ -42,29 +41,13 @@ jobs:
           git \
           python=3.13
 
-        conda activate mlc-chat-venv
-
-        echo "=== Tool Versions ==="
-        cmake --version
-        rustc --version
-        python --version
-        git --version
-
-    # 4️⃣ Generate config (FULLY non-interactive — FIXED)
+    # 4️⃣ Generate config (non-interactive)
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
-
         mkdir -p build
         cd build
 
-        # Prompt answers:
-        # 1 TVM path → default
-        # 2 CUDA → n
-        # 3 ROCm → n
-        # 4 Vulkan → n
-        # 5 Metal → n
-        # 6 OpenCL → n
         printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
     # 5️⃣ Build runtime
@@ -72,20 +55,25 @@ jobs:
       run: |
         conda activate mlc-chat-venv
         cd build
-
         cmake ..
         make -j$(nproc)
 
-    # 6️⃣ Install Python package
+    # ✅ NEW FIX STEP
+    - name: Install TVM Python bindings
+      run: |
+        conda activate mlc-chat-venv
+        cd 3rdparty/tvm/python
+        pip install -e .
+
+    # 6️⃣ Install mlc_llm Python package
     - name: Install mlc_llm Python package
       run: |
         conda activate mlc-chat-venv
         cd python
-
         pip install -e .
 
-    # 7️⃣ Validate installation
-    - name: Validate build
+    # 7️⃣ Validate build
+    - name: Validate installation
       run: |
         conda activate mlc-chat-venv
 
@@ -97,5 +85,3 @@ jobs:
 
         echo "=== Python import test ==="
         python -c "import mlc_llm; print(mlc_llm)"
-
-
