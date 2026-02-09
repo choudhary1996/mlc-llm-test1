@@ -9,6 +9,7 @@ on:
 
 jobs:
   build:
+    name: Build mlc_llm from source
     runs-on: ubuntu-latest
 
     defaults:
@@ -17,7 +18,7 @@ jobs:
 
     steps:
 
-    # 1️⃣ Checkout repo + submodules
+    # 1️⃣ Checkout repository + submodules (TVM included)
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -32,7 +33,7 @@ jobs:
         activate-environment: mlc-chat-venv
         python-version: 3.13
 
-    # 3️⃣ Create build env
+    # 3️⃣ Create fresh build environment
     - name: Create build environment
       run: |
         conda create -y -n mlc-chat-venv -c conda-forge \
@@ -41,24 +42,33 @@ jobs:
           git \
           python=3.13
 
-    # 4️⃣ Generate config
+    # 4️⃣ Generate CMake config (fully non-interactive)
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
+
         mkdir -p build
         cd build
 
+        # Answers prompts automatically:
+        # TVM path → default
+        # CUDA → n
+        # ROCm → n
+        # Vulkan → n
+        # Metal → n
+        # OpenCL → n
         printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
-    # 5️⃣ Build mlc runtime
+    # 5️⃣ Build mlc_llm runtime
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
         cd build
+
         cmake ..
         make -j$(nproc)
 
-    # ✅ FIX: Build TVM runtime libs
+    # 6️⃣ Build TVM runtime libraries
     - name: Build TVM runtime
       run: |
         conda activate mlc-chat-venv
@@ -70,27 +80,33 @@ jobs:
         cmake ..
         make -j$(nproc)
 
-    # 6️⃣ Install TVM Python bindings
+    # 7️⃣ Install TVM Python bindings
     - name: Install TVM Python bindings
       run: |
         conda activate mlc-chat-venv
         cd 3rdparty/tvm/python
         pip install -e .
 
-    # 7️⃣ Install mlc_llm Python package
+    # 8️⃣ Install mlc_llm Python package
     - name: Install mlc_llm Python package
       run: |
         conda activate mlc-chat-venv
         cd python
         pip install -e .
 
-    # ✅ Export library paths
+    # 9️⃣ Install runtime Python dependencies
+    - name: Install runtime Python dependencies
+      run: |
+        conda activate mlc-chat-venv
+        pip install psutil numpy decorator attrs cloudpickle
+
+    # 🔟 Export shared library paths
     - name: Export library paths
       run: |
         echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
 
-    # 8️⃣ Validate build
-    - name: Validate installation
+    # 1️⃣1️⃣ Validate installation
+    - name: Validate build
       run: |
         conda activate mlc-chat-venv
 
@@ -104,7 +120,7 @@ jobs:
         echo "=== Python import test ==="
         python -c "import mlc_llm; print(mlc_llm)"
 
-    # 9️⃣ Upload artifacts
+    # 1️⃣2️⃣ Upload artifacts
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
