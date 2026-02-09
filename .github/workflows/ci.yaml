@@ -9,7 +9,6 @@ on:
 
 jobs:
   build:
-    name: Build mlc_llm from source
     runs-on: ubuntu-latest
 
     defaults:
@@ -18,13 +17,11 @@ jobs:
 
     steps:
 
-    # 1️⃣ Checkout THIS repository (mlc-llm or your fork)
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: recursive   # Pulls 3rdparty/tvm automatically
+        submodules: recursive
 
-    # 2️⃣ Setup Conda
     - name: Setup Miniconda
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -33,7 +30,6 @@ jobs:
         activate-environment: mlc-chat-venv
         python-version: 3.13
 
-    # 3️⃣ Create fresh build environment
     - name: Create build environment
       run: |
         conda create -y -n mlc-chat-venv -c conda-forge \
@@ -42,15 +38,7 @@ jobs:
           git \
           python=3.13
 
-        conda activate mlc-chat-venv
-
-        echo "=== Tool Versions ==="
-        cmake --version
-        rustc --version
-        python --version
-        git --version
-
-    # 4️⃣ Configure build (non-interactive)
+    # ✅ FIXED STEP
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
@@ -58,10 +46,8 @@ jobs:
         mkdir -p build
         cd build
 
-        # Fix interactive prompt (uses bundled 3rdparty/tvm)
-        echo "" | python ../cmake/gen_cmake_config.py
+        printf "\n n\n n\n n\n" | python ../cmake/gen_cmake_config.py
 
-    # 5️⃣ Build runtime libraries
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
@@ -70,30 +56,22 @@ jobs:
         cmake ..
         make -j$(nproc)
 
-    # 6️⃣ Install Python package
-    - name: Install mlc_llm Python package
+    - name: Install Python package
       run: |
         conda activate mlc-chat-venv
         cd python
 
         pip install -e .
 
-    # 7️⃣ Validate installation
     - name: Validate build
       run: |
         conda activate mlc-chat-venv
 
-        echo "=== Build artifacts ==="
         ls -l ./build/ | grep -E "libmlc_llm|libtvm_runtime" || true
-
-        echo "=== CLI Help ==="
         mlc_llm chat -h
-
-        echo "=== Python Import Test ==="
         python -c "import mlc_llm; print(mlc_llm)"
 
-    # 8️⃣ Upload compiled artifacts (optional)
-    - name: Upload build artifacts
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: mlc-llm-build
