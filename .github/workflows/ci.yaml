@@ -58,22 +58,27 @@ jobs:
         cmake ..
         make -j$(nproc)
 
-    # ✅ NEW FIX STEP
+    # 6️⃣ Install TVM Python bindings
     - name: Install TVM Python bindings
       run: |
         conda activate mlc-chat-venv
         cd 3rdparty/tvm/python
         pip install -e .
 
-    # 6️⃣ Install mlc_llm Python package
+    # 7️⃣ Install mlc_llm Python package
     - name: Install mlc_llm Python package
       run: |
         conda activate mlc-chat-venv
         cd python
         pip install -e .
 
-    # 7️⃣ Validate build
-    - name: Validate installation
+    # ✅ FIX: Export shared libraries
+    - name: Export TVM library path
+      run: |
+        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build" >> $GITHUB_ENV
+
+    # 8️⃣ Validate installation
+    - name: Validate build
       run: |
         conda activate mlc-chat-venv
 
@@ -85,3 +90,10 @@ jobs:
 
         echo "=== Python import test ==="
         python -c "import mlc_llm; print(mlc_llm)"
+
+    # 9️⃣ Upload artifacts
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlc-llm-build
+        path: build/
