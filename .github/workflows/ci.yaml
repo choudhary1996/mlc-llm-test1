@@ -18,7 +18,7 @@ jobs:
 
     steps:
 
-    # 1️⃣ Checkout repo + submodules (TVM runtime included)
+    # 1️⃣ Checkout repo + submodules (TVM included)
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -33,7 +33,7 @@ jobs:
         activate-environment: mlc-chat-venv
         python-version: 3.13
 
-    # 3️⃣ Create fresh build environment
+    # 3️⃣ Create build environment
     - name: Create build environment
       run: |
         conda create -y -n mlc-chat-venv -c conda-forge \
@@ -50,7 +50,7 @@ jobs:
         python --version
         git --version
 
-    # 4️⃣ Generate CMake config (FULLY non-interactive)
+    # 4️⃣ Generate config (FULLY non-interactive — FIXED)
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
@@ -58,16 +58,16 @@ jobs:
         mkdir -p build
         cd build
 
-        # Answers:
-        # TVM path → default
-        # CUDA → n
-        # Metal → n
-        # Vulkan → n
-        printf "\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+        # Prompt answers:
+        # 1 TVM path → default
+        # 2 CUDA → n
+        # 3 ROCm → n
+        # 4 Vulkan → n
+        # 5 Metal → n
+        # 6 OpenCL → n
+        printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
-
-
-    # 5️⃣ Build runtime libraries
+    # 5️⃣ Build runtime
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
@@ -97,4 +97,5 @@ jobs:
 
         echo "=== Python import test ==="
         python -c "import mlc_llm; print(mlc_llm)"
+
 
