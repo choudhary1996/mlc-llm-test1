@@ -41,7 +41,7 @@ jobs:
           git \
           python=3.13
 
-    # 4️⃣ Generate config (non-interactive)
+    # 4️⃣ Generate config
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
@@ -50,11 +50,23 @@ jobs:
 
         printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
-    # 5️⃣ Build runtime
+    # 5️⃣ Build mlc runtime
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
         cd build
+        cmake ..
+        make -j$(nproc)
+
+    # ✅ FIX: Build TVM runtime libs
+    - name: Build TVM runtime
+      run: |
+        conda activate mlc-chat-venv
+        cd 3rdparty/tvm
+
+        mkdir -p build
+        cd build
+
         cmake ..
         make -j$(nproc)
 
@@ -72,18 +84,19 @@ jobs:
         cd python
         pip install -e .
 
-    # ✅ FIX: Export shared libraries
-    - name: Export TVM library path
+    # ✅ Export library paths
+    - name: Export library paths
       run: |
-        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
 
-    # 8️⃣ Validate installation
-    - name: Validate build
+    # 8️⃣ Validate build
+    - name: Validate installation
       run: |
         conda activate mlc-chat-venv
 
         echo "=== Build artifacts ==="
-        ls -l ./build/ | grep -E "libmlc_llm|libtvm_runtime" || true
+        ls -l ./build/ | grep libmlc || true
+        ls -l ./3rdparty/tvm/build/ | grep libtvm || true
 
         echo "=== CLI test ==="
         mlc_llm chat -h
@@ -96,4 +109,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: mlc-llm-build
-        path: build/
+        path: |
+          build/
+          3rdparty/tvm/build/
