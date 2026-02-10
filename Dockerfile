@@ -1,6 +1,5 @@
 # =========================================================
 # Multipurpose Dev + Build Image (Production Grade)
-# ToS-free via Miniforge
 # =========================================================
 
 FROM ubuntu:22.04
@@ -26,7 +25,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------
-# Install Miniforge (NO ToS issues)
+# Install Miniforge (No ToS issues)
 # ---------------------------------------------------------
 RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh && \
     bash miniforge.sh -b -p $CONDA_DIR && \
@@ -48,39 +47,62 @@ RUN conda create -y -n mlc-chat-venv \
 RUN echo "conda activate mlc-chat-venv" >> ~/.bashrc
 
 WORKDIR /workspace
-
-# ---------------------------------------------------------
-# Copy source
-# ---------------------------------------------------------
 COPY . /workspace
 
 # ---------------------------------------------------------
-# Build script
+# Build script (FIXED)
 # ---------------------------------------------------------
-RUN echo '#!/usr/bin/env bash\n\
-set -e\n\
-conda activate mlc-chat-venv\n\
-mkdir -p build && cd build\n\
-printf "\\nn\\nn\\nn\\nn\\nn\\n" | python ../cmake/gen_cmake_config.py\n\
-cmake ..\n\
-cmake --build . --parallel\n\
-cd ../3rdparty/tvm\n\
-mkdir -p build && cd build\n\
-cmake ..\n\
-cmake --build . --parallel\n\
-cd ../python && pip install -e .\n\
-cd /workspace/python && pip install -e . --no-deps\n\
-pip install psutil numpy decorator attrs cloudpickle\n\
-' > /usr/local/bin/build-mlc && chmod +x /usr/local/bin/build-mlc
+RUN cat <<'EOF' > /usr/local/bin/build-mlc
+#!/usr/bin/env bash
+set -e
+
+conda activate mlc-chat-venv
+
+echo "=== Generate config ==="
+mkdir -p build
+cd build
+printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+
+echo "=== Build mlc_llm ==="
+cmake ..
+cmake --build . --parallel
+
+echo "=== Build TVM ==="
+cd ../3rdparty/tvm
+mkdir -p build
+cd build
+cmake ..
+cmake --build . --parallel
+
+echo "=== Install Python bindings ==="
+cd ../python
+pip install -e .
+
+cd /workspace/python
+pip install -e . --no-deps
+
+pip install psutil numpy decorator attrs cloudpickle
+
+echo "=== Build complete ==="
+EOF
+
+RUN chmod +x /usr/local/bin/build-mlc
 
 # ---------------------------------------------------------
-# Package script
+# Package script (FIXED)
 # ---------------------------------------------------------
-RUN echo '#!/usr/bin/env bash\n\
-set -e\n\
-mkdir -p /artifacts\n\
-cp -r /workspace/build /artifacts/\n\
-cp -r /workspace/3rdparty/tvm/build /artifacts/\n\
-' > /usr/local/bin/package-mlc && chmod +x /usr/local/bin/package-mlc
+RUN cat <<'EOF' > /usr/local/bin/package-mlc
+#!/usr/bin/env bash
+set -e
+
+mkdir -p /artifacts
+
+cp -r /workspace/build /artifacts/
+cp -r /workspace/3rdparty/tvm/build /artifacts/
+
+echo "Artifacts stored in /artifacts"
+EOF
+
+RUN chmod +x /usr/local/bin/package-mlc
 
 CMD ["bash"]
