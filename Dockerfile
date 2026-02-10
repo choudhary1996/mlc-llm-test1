@@ -1,6 +1,6 @@
 # =========================================================
 # Multipurpose Dev + Build Image (Production Grade)
-# ToS-safe + CI-safe
+# ToS-free via Miniforge
 # =========================================================
 
 FROM ubuntu:22.04
@@ -10,7 +10,7 @@ ENV CONDA_DIR=/opt/conda
 ENV PATH=$CONDA_DIR/bin:$PATH
 
 # ---------------------------------------------------------
-# System Dependencies
+# System dependencies
 # ---------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -26,23 +26,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------
-# Install Miniconda
+# Install Miniforge (NO ToS issues)
 # ---------------------------------------------------------
-RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
-    bash miniconda.sh -b -p $CONDA_DIR && \
-    rm miniconda.sh && \
+RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh && \
+    bash miniforge.sh -b -p $CONDA_DIR && \
+    rm miniforge.sh && \
     conda clean -afy
 
 SHELL ["bash", "-l", "-c"]
 
 # ---------------------------------------------------------
-# 🔧 Configure Conda (Avoid ToS + faster)
-# ---------------------------------------------------------
-RUN conda config --add channels conda-forge && \
-    conda config --set channel_priority strict
-
-# ---------------------------------------------------------
-# Create Environment
+# Create environment
 # ---------------------------------------------------------
 RUN conda create -y -n mlc-chat-venv \
     python=3.12 \
