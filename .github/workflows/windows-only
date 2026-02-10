@@ -1,0 +1,135 @@
+name: Build MLC LLM Runtime (Windows)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build mlc_llm from source (Windows)
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+
+    # 1️⃣ Checkout repo + submodules
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    # 2️⃣ Setup Mambaforge (FASTER than conda)
+    - name: Setup Mambaforge
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        miniforge-variant: Mambaforge
+        miniforge-version: latest
+        activate-environment: mlc-chat-venv
+        auto-update-conda: true
+        python-version: 3.13
+        use-mamba: true
+
+    # 3️⃣ Cache conda + pip packages (speed boost)
+    - name: Cache conda pkgs
+      uses: actions/cache@v4
+      with:
+        path: C:\Users\runneradmin\conda_pkgs_dir
+        key: ${{ runner.os }}-conda-${{ hashFiles('**/environment.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-conda-
+
+    # 4️⃣ Create build environment
+    - name: Create build environment
+      run: |
+        mamba create -y -n mlc-chat-venv -c conda-forge \
+          cmake>=3.24 \
+          ninja \
+          rust \
+          git \
+          python=3.13
+
+    # 5️⃣ Generate CMake config
+    - name: Generate CMake config
+      run: |
+        conda activate mlc-chat-venv
+
+        mkdir -p build
+        cd build
+
+        printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+
+    # 6️⃣ Build mlc_llm runtime (FAST via Ninja)
+    - name: Build mlc_llm runtime
+      run: |
+        conda activate mlc-chat-venv
+        cd build
+
+        cmake -G Ninja ..
+        cmake --build . --parallel
+
+    # 7️⃣ Build TVM runtime
+    - name: Build TVM runtime
+      run: |
+        conda activate mlc-chat-venv
+        cd 3rdparty/tvm
+
+        mkdir -p build
+        cd build
+
+        cmake -G Ninja ..
+        cmake --build . --parallel
+
+    # 8️⃣ Install TVM Python bindings
+    - name: Install TVM Python bindings
+      run: |
+        conda activate mlc-chat-venv
+        cd 3rdparty/tvm/python
+        pip install -e .
+
+    # 9️⃣ Install mlc_llm Python package
+    - name: Install mlc_llm Python package
+      run: |
+        conda activate mlc-chat-venv
+        cd python
+        pip install -e .
+
+    # 🔟 Install runtime Python deps
+    - name: Install runtime Python dependencies
+      run: |
+        conda activate mlc-chat-venv
+        pip install psutil numpy decorator attrs cloudpickle
+
+    # 1️⃣1️⃣ Export DLL paths
+    - name: Export library paths
+      run: |
+        echo "PATH=$PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
+
+    # 1️⃣2️⃣ Validate build
+    - name: Validate build
+      run: |
+        conda activate mlc-chat-venv
+
+        echo "=== Build artifacts ==="
+        ls -l ./build/ | grep mlc || true
+        ls -l ./3rdparty/tvm/build/ | grep tvm || true
+
+        echo "=== CLI test ==="
+        mlc_llm chat -h
+
+        echo "=== Python import test ==="
+        python -c "import mlc_llm; print(mlc_llm)"
+
+    # 1️⃣3️⃣ Upload artifacts
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlc-llm-build-windows
+        path: |
+          build/
+          3rdparty/tvm/build/
