@@ -18,13 +18,13 @@ jobs:
 
     steps:
 
-    # 1️⃣ Checkout repository + submodules
+    # 1️⃣ Checkout repository + submodules (TVM included)
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 2️⃣ Setup Conda (same as Linux)
+    # 2️⃣ Setup Conda
     - name: Setup Miniconda
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -52,7 +52,7 @@ jobs:
 
         printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
-    # 5️⃣ Build mlc_llm runtime (parallel for speed)
+    # 5️⃣ Build mlc_llm runtime (parallel = faster)
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
@@ -60,6 +60,20 @@ jobs:
 
         cmake ..
         cmake --build . --parallel
+
+    # 5️⃣1️⃣ Fix Windows DLL output paths
+    - name: Normalize mlc_llm DLL paths
+      run: |
+        cd build
+
+        for dir in Release RelWithDebInfo Debug; do
+          if [ -d "$dir" ]; then
+            cp $dir/*.dll . 2>/dev/null || true
+          fi
+        done
+
+        echo "=== mlc_llm DLLs ==="
+        ls -l *.dll || true
 
     # 6️⃣ Build TVM runtime libraries
     - name: Build TVM runtime
@@ -72,6 +86,20 @@ jobs:
 
         cmake ..
         cmake --build . --parallel
+
+    # 6️⃣1️⃣ Fix TVM DLL paths
+    - name: Normalize TVM DLL paths
+      run: |
+        cd 3rdparty/tvm/build
+
+        for dir in Release RelWithDebInfo Debug; do
+          if [ -d "$dir" ]; then
+            cp $dir/*.dll . 2>/dev/null || true
+          fi
+        done
+
+        echo "=== TVM DLLs ==="
+        ls -l *.dll || true
 
     # 7️⃣ Install TVM Python bindings
     - name: Install TVM Python bindings
