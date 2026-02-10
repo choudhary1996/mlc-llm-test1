@@ -1,6 +1,6 @@
 # =========================================================
-# Multipurpose Dev + Build Image (Production Grade)
-# FINAL FIXED
+# Multipurpose Dev + Build Image — STABLE CI VERSION
+# Prioritizes reliability over speed
 # =========================================================
 
 FROM ubuntu:22.04
@@ -10,13 +10,12 @@ ENV CONDA_DIR=/opt/conda
 ENV PATH=$CONDA_DIR/bin:$PATH
 
 # ---------------------------------------------------------
-# System dependencies
+# System dependencies (minimal but sufficient)
 # ---------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
     cmake \
-    ninja-build \
     curl \
     wget \
     pkg-config \
@@ -26,7 +25,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------
-# Install Miniforge
+# Install Miniforge (No ToS / CI safe)
 # ---------------------------------------------------------
 RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh && \
     bash miniforge.sh -b -p $CONDA_DIR && \
@@ -49,13 +48,13 @@ WORKDIR /workspace
 COPY . /workspace
 
 # ---------------------------------------------------------
-# Build script (CI-safe conda activation)
+# Build script — STABLE SETTINGS
 # ---------------------------------------------------------
 RUN cat <<'EOF' > /usr/local/bin/build-mlc
 #!/usr/bin/env bash
 set -e
 
-# Proper conda activation
+echo "Activating conda..."
 source /opt/conda/etc/profile.d/conda.sh
 conda activate mlc-chat-venv
 
@@ -64,16 +63,16 @@ mkdir -p build
 cd build
 printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
-echo "=== Build mlc_llm ==="
+echo "=== Build mlc_llm (stable mode) ==="
 cmake ..
-cmake --build . --parallel
+cmake --build . --parallel 1   # 🔒 Single-thread for stability
 
-echo "=== Build TVM ==="
+echo "=== Build TVM runtime (stable mode) ==="
 cd ../3rdparty/tvm
 mkdir -p build
 cd build
 cmake ..
-cmake --build . --parallel
+cmake --build . --parallel 1   # 🔒 Single-thread
 
 echo "=== Install Python bindings ==="
 cd ../python
@@ -84,13 +83,17 @@ pip install -e . --no-deps
 
 pip install psutil numpy decorator attrs cloudpickle
 
+echo "=== Cleaning temp build files ==="
+rm -rf /workspace/build/CMakeFiles || true
+rm -rf /workspace/3rdparty/tvm/build/CMakeFiles || true
+
 echo "=== Build complete ==="
 EOF
 
 RUN chmod +x /usr/local/bin/build-mlc
 
 # ---------------------------------------------------------
-# Package script
+# Packaging script
 # ---------------------------------------------------------
 RUN cat <<'EOF' > /usr/local/bin/package-mlc
 #!/usr/bin/env bash
