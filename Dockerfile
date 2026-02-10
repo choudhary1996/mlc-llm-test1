@@ -1,5 +1,6 @@
 # =========================================================
 # Multipurpose Dev + Build Image (Production Grade)
+# FINAL FIXED
 # =========================================================
 
 FROM ubuntu:22.04
@@ -25,37 +26,37 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------
-# Install Miniforge (No ToS issues)
+# Install Miniforge
 # ---------------------------------------------------------
 RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh && \
     bash miniforge.sh -b -p $CONDA_DIR && \
     rm miniforge.sh && \
     conda clean -afy
 
-SHELL ["bash", "-l", "-c"]
+SHELL ["bash", "-c"]
 
 # ---------------------------------------------------------
 # Create environment
 # ---------------------------------------------------------
-RUN conda create -y -n mlc-chat-venv \
+RUN $CONDA_DIR/bin/conda create -y -n mlc-chat-venv \
     python=3.12 \
     "cmake>=3.24" \
     rust \
     git \
     && conda clean -afy
 
-RUN echo "conda activate mlc-chat-venv" >> ~/.bashrc
-
 WORKDIR /workspace
 COPY . /workspace
 
 # ---------------------------------------------------------
-# Build script (FIXED)
+# Build script (CI-safe conda activation)
 # ---------------------------------------------------------
 RUN cat <<'EOF' > /usr/local/bin/build-mlc
 #!/usr/bin/env bash
 set -e
 
+# Proper conda activation
+source /opt/conda/etc/profile.d/conda.sh
 conda activate mlc-chat-venv
 
 echo "=== Generate config ==="
@@ -89,7 +90,7 @@ EOF
 RUN chmod +x /usr/local/bin/build-mlc
 
 # ---------------------------------------------------------
-# Package script (FIXED)
+# Package script
 # ---------------------------------------------------------
 RUN cat <<'EOF' > /usr/local/bin/package-mlc
 #!/usr/bin/env bash
