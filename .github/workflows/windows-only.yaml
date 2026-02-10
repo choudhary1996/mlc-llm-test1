@@ -18,7 +18,7 @@ jobs:
 
     steps:
 
-    # 1️⃣ Checkout repository + submodules (TVM included)
+    # 1️⃣ Checkout repository + submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -31,18 +31,18 @@ jobs:
         auto-update-conda: true
         auto-activate-base: false
         activate-environment: mlc-chat-venv
-        python-version: 3.13
+        python-version: 3.12   # ⚠️ 3.13 → 3.12 for compatibility
 
-    # 3️⃣ Create fresh build environment
+    # 3️⃣ Create build environment
     - name: Create build environment
       run: |
         conda create -y -n mlc-chat-venv -c conda-forge \
           "cmake>=3.24" \
           rust \
           git \
-          python=3.13
+          python=3.12
 
-    # 4️⃣ Generate CMake config (non-interactive)
+    # 4️⃣ Generate CMake config
     - name: Generate CMake config
       run: |
         conda activate mlc-chat-venv
@@ -52,7 +52,7 @@ jobs:
 
         printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
 
-    # 5️⃣ Build mlc_llm runtime (parallel = faster)
+    # 5️⃣ Build mlc_llm runtime
     - name: Build mlc_llm runtime
       run: |
         conda activate mlc-chat-venv
@@ -61,21 +61,16 @@ jobs:
         cmake ..
         cmake --build . --parallel
 
-    # 5️⃣1️⃣ Fix Windows DLL output paths
+    # 5️⃣1️⃣ Fix DLL paths
     - name: Normalize mlc_llm DLL paths
       run: |
         cd build
-
         for dir in Release RelWithDebInfo Debug; do
-          if [ -d "$dir" ]; then
-            cp $dir/*.dll . 2>/dev/null || true
-          fi
+          if [ -d "$dir" ]; then cp $dir/*.dll . 2>/dev/null || true; fi
         done
-
-        echo "=== mlc_llm DLLs ==="
         ls -l *.dll || true
 
-    # 6️⃣ Build TVM runtime libraries
+    # 6️⃣ Build TVM runtime
     - name: Build TVM runtime
       run: |
         conda activate mlc-chat-venv
@@ -91,14 +86,9 @@ jobs:
     - name: Normalize TVM DLL paths
       run: |
         cd 3rdparty/tvm/build
-
         for dir in Release RelWithDebInfo Debug; do
-          if [ -d "$dir" ]; then
-            cp $dir/*.dll . 2>/dev/null || true
-          fi
+          if [ -d "$dir" ]; then cp $dir/*.dll . 2>/dev/null || true; fi
         done
-
-        echo "=== TVM DLLs ==="
         ls -l *.dll || true
 
     # 7️⃣ Install TVM Python bindings
@@ -108,25 +98,25 @@ jobs:
         cd 3rdparty/tvm/python
         pip install -e .
 
-    # 8️⃣ Install mlc_llm Python package
+    # 8️⃣ Install mlc_llm Python package (NO HEAVY DEPS)
     - name: Install mlc_llm Python package
       run: |
         conda activate mlc-chat-venv
         cd python
-        pip install -e .
+        pip install -e . --no-deps
 
-    # 9️⃣ Install runtime Python dependencies
+    # 9️⃣ Install minimal runtime deps
     - name: Install runtime Python dependencies
       run: |
         conda activate mlc-chat-venv
         pip install psutil numpy decorator attrs cloudpickle
 
-    # 🔟 Export DLL paths (Windows equivalent of LD_LIBRARY_PATH)
+    # 🔟 Export DLL paths
     - name: Export library paths
       run: |
         echo "PATH=$PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
 
-    # 1️⃣1️⃣ Validate installation
+    # 1️⃣1️⃣ Validate build
     - name: Validate build
       run: |
         conda activate mlc-chat-venv
