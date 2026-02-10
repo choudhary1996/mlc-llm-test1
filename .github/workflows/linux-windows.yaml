@@ -54,10 +54,13 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Force -Path build | Out-Null
-        cd build
-        $inputData = "`n n`n n`n n`n n`n n`n"
-        $inputData | python ../cmake/gen_cmake_config.py
+       New-Item -ItemType Directory -Force -Path build | Out-Null
+       cd build
+
+       $inputData = "`n" + ("n`n" * 5)
+
+       $inputData | python ../cmake/gen_cmake_config.py
+
 
     # 6️⃣ Build runtimes (Linux)
     - name: Build runtimes (Linux)
