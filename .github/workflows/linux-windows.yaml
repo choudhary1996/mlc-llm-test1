@@ -1,0 +1,130 @@
+name: Build MLC LLM Runtime (Matrix)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build mlc_llm (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+
+    # 1️⃣ Checkout
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    # 2️⃣ Setup Conda
+    - name: Setup Miniconda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        auto-update-conda: true
+        activate-environment: mlc-chat-venv
+        python-version: "3.13"
+
+    # 3️⃣ Create environment
+    - name: Create build environment
+      shell: bash -l {0}
+      run: |
+        conda create -y -n mlc-chat-venv -c conda-forge \
+          "cmake>=3.24" rust git python=3.13 \
+          psutil numpy decorator attrs cloudpickle
+
+    # 4️⃣ Generate config (Linux)
+    - name: Generate config (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash -l {0}
+      run: |
+        mkdir build && cd build
+        printf "\nn\nn\nn\nn\nn\n" | python ../cmake/gen_cmake_config.py
+
+    # 5️⃣ Generate config (Windows)
+    - name: Generate config (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path build | Out-Null
+        cd build
+        $inputData = "`n n`n n`n n`n n`n n`n"
+        $inputData | python ../cmake/gen_cmake_config.py
+
+    # 6️⃣ Build runtimes (Linux)
+    - name: Build runtimes (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash -l {0}
+      run: |
+        cd build
+        cmake ..
+        make -j$(nproc)
+
+        cd ../3rdparty/tvm
+        mkdir build && cd build
+        cmake ..
+        make -j$(nproc)
+
+    # 7️⃣ Build runtimes (Windows)
+    - name: Build runtimes (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        cd build
+        cmake ..
+        cmake --build . --config Release --parallel
+
+        cd ../3rdparty/tvm
+        New-Item -ItemType Directory -Force -Path build | Out-Null
+        cd build
+        cmake ..
+        cmake --build . --config Release --parallel
+
+    # 8️⃣ Install Python bindings
+    - name: Install Python packages
+      shell: bash -l {0}
+      run: |
+        pip install -e 3rdparty/tvm/python
+        pip install -e python
+
+    # 9️⃣ Export runtime paths (Linux)
+    - name: Export runtime paths (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash -l {0}
+      run: |
+        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
+
+    # 🔟 Export runtime paths (Windows)
+    - name: Export runtime paths (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        $mlc = "$(pwd)\build"
+        $tvm = "$(pwd)\3rdparty\tvm\build"
+
+        echo $mlc | Out-File -FilePath $env:GITHUB_PATH -Append
+        echo $tvm | Out-File -FilePath $env:GITHUB_PATH -Append
+
+    # 1️⃣1️⃣ Validate
+    - name: Validate build
+      shell: bash -l {0}
+      run: |
+        mlc_llm chat -h
+        python -c "import mlc_llm; print('Success:', mlc_llm)"
+
+    # 1️⃣2️⃣ Upload artifacts
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlc-llm-${{ matrix.os }}
+        path: |
+          build/**
+          3rdparty/tvm/build/**
