@@ -1,4 +1,4 @@
-name: Docker Build MLC Runtime
+name: Docker
 
 on:
   push:
