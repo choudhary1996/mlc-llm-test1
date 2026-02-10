@@ -1,5 +1,6 @@
 # =========================================================
 # Multipurpose Dev + Build Image (Production Grade)
+# ToS-safe + CI-safe
 # =========================================================
 
 FROM ubuntu:22.04
@@ -9,7 +10,7 @@ ENV CONDA_DIR=/opt/conda
 ENV PATH=$CONDA_DIR/bin:$PATH
 
 # ---------------------------------------------------------
-# 1️⃣ System Dependencies (Dev + Build)
+# System Dependencies
 # ---------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -25,7 +26,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------
-# 2️⃣ Install Miniconda
+# Install Miniconda
 # ---------------------------------------------------------
 RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
     bash miniconda.sh -b -p $CONDA_DIR && \
@@ -35,7 +36,13 @@ RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.s
 SHELL ["bash", "-l", "-c"]
 
 # ---------------------------------------------------------
-# 3️⃣ Create Conda Environment
+# 🔧 Configure Conda (Avoid ToS + faster)
+# ---------------------------------------------------------
+RUN conda config --add channels conda-forge && \
+    conda config --set channel_priority strict
+
+# ---------------------------------------------------------
+# Create Environment
 # ---------------------------------------------------------
 RUN conda create -y -n mlc-chat-venv \
     python=3.12 \
@@ -49,46 +56,37 @@ RUN echo "conda activate mlc-chat-venv" >> ~/.bashrc
 WORKDIR /workspace
 
 # ---------------------------------------------------------
-# 4️⃣ Copy Source
+# Copy source
 # ---------------------------------------------------------
 COPY . /workspace
 
 # ---------------------------------------------------------
-# 5️⃣ Build Script
+# Build script
 # ---------------------------------------------------------
 RUN echo '#!/usr/bin/env bash\n\
 set -e\n\
 conda activate mlc-chat-venv\n\
-echo "=== Generate config ==="\n\
 mkdir -p build && cd build\n\
 printf "\\nn\\nn\\nn\\nn\\nn\\n" | python ../cmake/gen_cmake_config.py\n\
-echo "=== Build mlc_llm ==="\n\
 cmake ..\n\
 cmake --build . --parallel\n\
-echo "=== Build TVM ==="\n\
 cd ../3rdparty/tvm\n\
 mkdir -p build && cd build\n\
 cmake ..\n\
 cmake --build . --parallel\n\
-echo "=== Install bindings ==="\n\
 cd ../python && pip install -e .\n\
 cd /workspace/python && pip install -e . --no-deps\n\
 pip install psutil numpy decorator attrs cloudpickle\n\
-echo "=== Build complete ==="\n\
 ' > /usr/local/bin/build-mlc && chmod +x /usr/local/bin/build-mlc
 
 # ---------------------------------------------------------
-# 6️⃣ Packaging Script
+# Package script
 # ---------------------------------------------------------
 RUN echo '#!/usr/bin/env bash\n\
 set -e\n\
 mkdir -p /artifacts\n\
 cp -r /workspace/build /artifacts/\n\
 cp -r /workspace/3rdparty/tvm/build /artifacts/\n\
-echo "Artifacts stored in /artifacts"\n\
 ' > /usr/local/bin/package-mlc && chmod +x /usr/local/bin/package-mlc
 
-# ---------------------------------------------------------
-# Default shell (Dev mode)
-# ---------------------------------------------------------
 CMD ["bash"]
