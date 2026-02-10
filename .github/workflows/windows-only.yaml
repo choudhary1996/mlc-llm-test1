@@ -1,4 +1,4 @@
-name: Build MLC LLM Runtime (Windows)
+name: Windows-only
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build mlc_llm from source
+    name: Build mlc_llm from source (Windows)
     runs-on: windows-latest
 
     defaults:
@@ -31,7 +31,7 @@ jobs:
         auto-update-conda: true
         auto-activate-base: false
         activate-environment: mlc-chat-venv
-        python-version: 3.12   # ⚠️ 3.13 → 3.12 for compatibility
+        python-version: 3.12
 
     # 3️⃣ Create build environment
     - name: Create build environment
@@ -61,13 +61,18 @@ jobs:
         cmake ..
         cmake --build . --parallel
 
-    # 5️⃣1️⃣ Fix DLL paths
+    # 5️⃣1️⃣ Normalize mlc_llm DLL paths
     - name: Normalize mlc_llm DLL paths
       run: |
         cd build
+
         for dir in Release RelWithDebInfo Debug; do
-          if [ -d "$dir" ]; then cp $dir/*.dll . 2>/dev/null || true; fi
+          if [ -d "$dir" ]; then
+            cp $dir/*.dll . 2>/dev/null || true
+          fi
         done
+
+        echo "=== mlc_llm DLLs ==="
         ls -l *.dll || true
 
     # 6️⃣ Build TVM runtime
@@ -82,13 +87,18 @@ jobs:
         cmake ..
         cmake --build . --parallel
 
-    # 6️⃣1️⃣ Fix TVM DLL paths
+    # 6️⃣1️⃣ Normalize TVM DLL paths
     - name: Normalize TVM DLL paths
       run: |
         cd 3rdparty/tvm/build
+
         for dir in Release RelWithDebInfo Debug; do
-          if [ -d "$dir" ]; then cp $dir/*.dll . 2>/dev/null || true; fi
+          if [ -d "$dir" ]; then
+            cp $dir/*.dll . 2>/dev/null || true
+          fi
         done
+
+        echo "=== TVM DLLs ==="
         ls -l *.dll || true
 
     # 7️⃣ Install TVM Python bindings
@@ -98,14 +108,20 @@ jobs:
         cd 3rdparty/tvm/python
         pip install -e .
 
-    # 8️⃣ Install mlc_llm Python package (NO HEAVY DEPS)
+    # 7️⃣1️⃣ FIX — Install TVM FFI runtime (missing module fix)
+    - name: Install TVM FFI runtime
+      run: |
+        conda activate mlc-chat-venv
+        pip install apache-tvm-ffi==0.1.0b15
+
+    # 8️⃣ Install mlc_llm Python package (skip heavy deps)
     - name: Install mlc_llm Python package
       run: |
         conda activate mlc-chat-venv
         cd python
         pip install -e . --no-deps
 
-    # 9️⃣ Install minimal runtime deps
+    # 9️⃣ Install minimal runtime dependencies
     - name: Install runtime Python dependencies
       run: |
         conda activate mlc-chat-venv
@@ -116,20 +132,20 @@ jobs:
       run: |
         echo "PATH=$PATH:$(pwd)/build:$(pwd)/3rdparty/tvm/build" >> $GITHUB_ENV
 
-    # 1️⃣1️⃣ Validate build
+    # 1️⃣1️⃣ Validate installation
     - name: Validate build
       run: |
         conda activate mlc-chat-venv
 
-        echo "=== Build artifacts ==="
-        ls -l ./build/ | grep mlc || true
-        ls -l ./3rdparty/tvm/build/ | grep tvm || true
+        echo "=== DLL check ==="
+        ls build/*.dll
+        ls 3rdparty/tvm/build/*.dll
+
+        echo "=== Python import test ==="
+        python -c "import tvm, tvm_ffi, mlc_llm; print('Imports OK')"
 
         echo "=== CLI test ==="
         mlc_llm chat -h
-
-        echo "=== Python import test ==="
-        python -c "import mlc_llm; print(mlc_llm)"
 
     # 1️⃣2️⃣ Upload artifacts
     - name: Upload build artifacts
