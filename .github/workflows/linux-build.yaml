@@ -2,7 +2,8 @@ name: linux build
 
 on:
 push:
-branches: [ main ]
+branches:
+- main
 workflow_dispatch:
 
 jobs:
@@ -11,18 +12,14 @@ runs-on: ubuntu-24.04
 
 ```
 steps:
-  # -----------------------------
-  # Checkout repo (recursive)
-  # -----------------------------
+  # Checkout repo
   - name: Checkout repository
     uses: actions/checkout@v4
     with:
       submodules: recursive
       fetch-depth: 0
 
-  # -----------------------------
   # Setup Conda
-  # -----------------------------
   - name: Setup Miniconda
     uses: conda-incubator/setup-miniconda@v3
     with:
@@ -32,9 +29,7 @@ steps:
       channels: conda-forge
       channel-priority: strict
 
-  # -----------------------------
-  # Recreate environment
-  # -----------------------------
+  # Recreate env
   - name: Recreate environment
     shell: bash -l {0}
     run: |
@@ -47,17 +42,13 @@ steps:
         python=3.13 \
         -y
 
-  # -----------------------------
-  # Generate CMake config (CI-safe)
-  # -----------------------------
+  # Generate config
   - name: Generate CMake config
     shell: bash -l {0}
     run: |
       { echo ""; yes n; } | python cmake/gen_cmake_config.py
 
-  # -----------------------------
   # Build TVM
-  # -----------------------------
   - name: Build TVM
     shell: bash -l {0}
     run: |
@@ -75,24 +66,17 @@ steps:
 
       make -j$(nproc)
 
-      ls libtvm.so libtvm_runtime.so
-
-  # -----------------------------
-  # Install TVM Python bindings
-  # -----------------------------
+  # Install TVM Python
   - name: Install TVM Python package
     shell: bash -l {0}
     run: |
       cd 3rdparty/tvm/python
       pip install -e .
 
-  # -----------------------------
-  # Build MLC-LLM core
-  # -----------------------------
+  # Build mlc-llm
   - name: Build mlc-llm core
     shell: bash -l {0}
     run: |
-      cd $GITHUB_WORKSPACE
       rm -rf build
       mkdir build && cd build
 
@@ -104,32 +88,13 @@ steps:
 
       make -j$(nproc)
 
-      ls libmlc_llm.so libmlc_llm_module.so
-
-      pip install numpy scipy psutil decorator attrs cloudpickle
-
-  # -----------------------------
-  # Install MLC Python package
-  # -----------------------------
+  # Install Python pkg
   - name: Install MLC Python Package
     shell: bash -l {0}
     run: |
-      cd $GITHUB_WORKSPACE
       pip install -e python
 
-  # -----------------------------
-  # Persist environment variables
-  # -----------------------------
-  - name: Set runtime environment
-    run: |
-      echo "TVM_HOME=$GITHUB_WORKSPACE/3rdparty/tvm" >> $GITHUB_ENV
-      echo "TVM_LIBRARY_PATH=$GITHUB_WORKSPACE/3rdparty/tvm/build" >> $GITHUB_ENV
-      echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build:$GITHUB_WORKSPACE/3rdparty/tvm/build:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-      echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$GITHUB_WORKSPACE/3rdparty/tvm/python:$PYTHONPATH" >> $GITHUB_ENV
-
-  # -----------------------------
-  # Verify build
-  # -----------------------------
+  # Verify
   - name: Verify installation
     shell: bash -l {0}
     run: |
