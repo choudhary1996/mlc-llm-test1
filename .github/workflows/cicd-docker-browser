@@ -1,0 +1,100 @@
+name: chrome-browser
+on:
+  push:
+    tags: ['v*'] # Triggers on version tags (e.g., v1.0.0)
+  pull_request:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Stage 1: Build & Push Multipurpose Docker Image
+  build-docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+
+  # Stage 2: Automated Tests (Gating Stage)
+  test:
+    needs: build-docker
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-docker.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Validations
+        run: |
+          python3 -c "import tvm; print('TVM Loaded:', tvm.__file__)"
+          python3 -c "import tvm.relax; print('Relax Ready')"
+      - name: Run Unit Tests
+        run: pip3 install pytest && pytest tests/python
+
+  # Stage 3: Build Wheels & Release
+  build-wheels:
+    needs: test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Wheel
+        run: |
+          pip install wheel
+          python setup.py bdist_wheel --dist-dir dist
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  # Stage 4: Publish Release
+  publish-release:
+    needs: build-wheels
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "wheels-*/*.whl"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
