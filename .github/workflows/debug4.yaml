@@ -1,0 +1,141 @@
+name: windows-debug4
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  Build-on-windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.13"
+          activate-environment: mlc-chat-venv
+          channels: conda-forge
+          channel-priority: strict
+
+      - name: Install Dependencies & Fix Lib Names
+        shell: powershell
+        run: |
+          conda install -n mlc-chat-venv -c conda-forge `
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja `
+            zlib libxml2 xz zstd pkg-config bzip2 -y
+
+          Write-Host "Searching for libxml2 library files..."
+          
+          # define the library directory
+          $LIB_DIR = "$env:CONDA_PREFIX\Library\lib"
+          if (!(Test-Path "$LIB_DIR")) { mkdir "$LIB_DIR" }
+
+          # 1. SEARCH: Find any .lib file with 'xml2' in the name inside the conda env
+          # This covers cases like libxml2_a.lib, libxml2.dll.a, or if it's hidden in a subdir
+          $candidates = Get-ChildItem -Path "$env:CONDA_PREFIX\Library" -Filter "*xml2*.lib" -Recurse -ErrorAction SilentlyContinue
+          
+          if ($candidates) {
+              $source_lib = $candidates[0].FullName
+              Write-Host "FOUND: $source_lib"
+              
+              # 2. COPY: Create the 'xml2.lib' alias that LLVM/CMake expects
+              Copy-Item -Path $source_lib -Destination "$LIB_DIR\xml2.lib" -Force
+              Write-Host "SUCCESS: Created alias '$LIB_DIR\xml2.lib'"
+          } else {
+              # 3. DEBUG: If still not found, print everything in Library/lib to see what IS there
+              Write-Error "CRITICAL: Could not find any *xml2*.lib file."
+              Write-Host "Listing contents of $LIB_DIR for debugging:"
+              Get-ChildItem -Path "$LIB_DIR" | Select-Object Name
+              exit 1
+          }
+
+          # Handle zlib alias (zlib.lib -> z.lib)
+          if (Test-Path "$LIB_DIR\zlib.lib") {
+              Copy-Item "$LIB_DIR\zlib.lib" -Destination "$LIB_DIR\z.lib" -Force
+              Write-Host "SUCCESS: Created alias z.lib"
+          }
+
+      - name: Build TVM
+        shell: powershell
+        run: |
+          cd 3rdparty/tvm
+          if (!(Test-Path build)) { mkdir build }
+          cd build
+          
+          $CONDA_LIB = "$env:CONDA_PREFIX\Library"
+          
+          # We now point LIBXML2_LIBRARY to the 'xml2.lib' alias we created above
+          cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DUSE_CUDA=OFF `
+            -DUSE_LLVM=ON `
+            -DBUILD_SHARED_LIBS=ON `
+            -DCMAKE_PREFIX_PATH="$CONDA_LIB" `
+            -DLIBXML2_LIBRARY="$CONDA_LIB\lib\xml2.lib" `
+            -DLIBXML2_INCLUDE_DIR="$CONDA_LIB\include\libxml2"
+          
+          cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Build mlc-llm core
+        shell: powershell
+        run: |
+          if (!(Test-Path build)) { mkdir build }
+          cd build
+          
+          $CONDA_LIB = "$env:CONDA_PREFIX\Library"
+          
+          cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DTVM_SOURCE_DIR="$env:GITHUB_WORKSPACE\3rdparty\tvm" `
+            -DUSE_CUDA=OFF `
+            -DUSE_LLVM=ON `
+            -DBUILD_SHARED_LIBS=ON `
+            -DCMAKE_PREFIX_PATH="$CONDA_LIB"
+            
+          cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Install & Verify
+        shell: powershell
+        run: |
+          python -m pip install -e "python"
+          
+          $tvm_home = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
+          $mlc_home = "$env:GITHUB_WORKSPACE"
+          
+          # Fix for 'No module named tvm_ffi'
+          $ffi_python = "$tvm_home\3rdparty\tvm-ffi\python"
+          $tvm_python = "$tvm_home\python"
+          $mlc_python = "$mlc_home\python"
+          $full_pythonpath = "$mlc_python;$tvm_python;$ffi_python"
+          
+          "PYTHONPATH=$full_pythonpath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TVM_HOME=$tvm_home" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          
+          # Add DLL folders to PATH
+          "$mlc_home\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$tvm_home\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          
+          # Add Python Scripts
+          $python_bin = python -c "import sys; import os; print(os.path.join(sys.prefix, 'Scripts'))"
+          "$python_bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Final Validation
+        shell: powershell
+        run: |
+          Write-Host "PYTHONPATH is: $env:PYTHONPATH"
+          
+          Write-Host "Testing TVM Import..."
+          python -c "import tvm; print('TVM Version:', tvm.__version__)"
+          
+          Write-Host "Testing MLC Import..."
+          python -c "import mlc_llm; print('MLC Import Successful')"
