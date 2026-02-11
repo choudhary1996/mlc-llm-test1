@@ -15,42 +15,39 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Conda Environment
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          auto-update-conda: false
-          python-version: "3.13"
-          activate-environment: mlc-chat-venv
-          channels: conda-forge
-          channel-priority: strict
-          # Use mamba for much faster, more reliable dependency resolution
-          mamba-version: "*" 
-
-      - name: Install Build Dependencies
-        shell: bash -l {0}
+      - name: Clean and Prep Environment
+        shell: bash
         run: |
-          # We use 'mamba install' here for speed and to avoid the extraction errors you saw
-          mamba install -y "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle
+          # Use the full path to conda if it's not in your global PATH yet
+          # Usually: ~/miniconda3/bin/conda
+          conda env remove -n mlc-chat-venv -y || true
+          conda create -n mlc-chat-venv python=3.13 -y
+          conda install -n mlc-chat-venv -c conda-forge -y \
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle
 
       - name: Build TVM (with CUDA 12.2)
-        shell: bash -l {0}
+        shell: bash
         run: |
+          # We source conda.sh to ensure 'conda activate' works in this shell
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlc-chat-venv
+          
           cd 3rdparty/tvm
-          rm -rf build
-          mkdir build && cd build
+          rm -rf build && mkdir build && cd build
           cmake .. \
             -DUSE_CUDA=ON \
             -DUSE_CUBLAS=ON \
             -DUSE_CUTLASS=ON \
-            -DUSE_CUDNN=OFF \
             -DBUILD_SHARED_LIBS=ON
           make -j$(nproc)
 
       - name: Build mlc-llm core
-        shell: bash -l {0}
+        shell: bash
         run: |
-          rm -rf build
-          mkdir build && cd build
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlc-chat-venv
+          
+          rm -rf build && mkdir build && cd build
           cmake .. \
             -DUSE_CUDA=ON \
             -DUSE_CUBLAS=ON \
@@ -59,24 +56,24 @@ jobs:
           make -j$(nproc)
 
       - name: Install MLC Python Package & Set Env
-        shell: bash -l {0}
+        shell: bash
         run: |
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlc-chat-venv
+          
           pip install -e python
           
-          # Capture absolute paths for this specific runner
+          # Persist variables for the Verify step
           echo "TVM_HOME=$GITHUB_WORKSPACE/3rdparty/tvm" >> $GITHUB_ENV
           echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$GITHUB_WORKSPACE/3rdparty/tvm/python:$PYTHONPATH" >> $GITHUB_ENV
-          
-          # Dynamic LD_LIBRARY_PATH including CUDA 12.2 paths
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build:$GITHUB_WORKSPACE/3rdparty/tvm/build:/usr/local/cuda-12.2/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          
-          # Add the python scripts folder to PATH so 'mlc_llm' works in the next step
-          echo "$(python -c 'import site; print(site.getusersitepackages().replace("site-packages", "bin"))')" >> $GITHUB_PATH
-          echo "$(pip show mlc_llm | grep Location | cut -d' ' -f2 | sed 's/python/bin/')" >> $GITHUB_PATH
 
       - name: Verify GPU and Installation
-        shell: bash -l {0}
+        shell: bash
         run: |
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlc-chat-venv
+          
           echo "--- Checking Hardware ---"
           nvidia-smi
           
