@@ -33,8 +33,16 @@ jobs:
       - name: Generate CMake config
         shell: powershell
         run: |
-          $input = "`n`n`n`n`n`n"
-          $input | python cmake/gen_cmake_config.py
+          @"
+          n
+          n
+          n
+          n
+          n
+          n
+          "@ | python cmake/gen_cmake_config.py
+
+          
 
       # ---------- Build TVM ----------
       - name: Build TVM
