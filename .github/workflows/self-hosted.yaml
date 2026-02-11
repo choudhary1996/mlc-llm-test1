@@ -1,0 +1,77 @@
+name: linux-gpu-build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  Build-and-Test-GPU:
+    runs-on: self-hosted  # Targets your A10G instance
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.13"
+          activate-environment: mlc-chat-venv
+          channels: conda-forge
+          channel-priority: strict
+
+      - name: Install Build Dependencies
+        shell: bash -l {0}
+        run: |
+          conda install -n mlc-chat-venv -c conda-forge \
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle -y
+
+      - name: Build TVM (with CUDA)
+        shell: bash -l {0}
+        run: |
+          cd 3rdparty/tvm
+          mkdir -p build && cd build
+          # Crucial: Point CMake to your CUDA installation
+          cmake .. \
+            -DUSE_CUDA=ON \
+            -DUSE_CUBLAS=ON \
+            -DUSE_CUTLASS=ON \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+
+      - name: Build mlc-llm core (with CUDA)
+        shell: bash -l {0}
+        run: |
+          mkdir -p build && cd build
+          cmake .. \
+            -DUSE_CUDA=ON \
+            -DUSE_CUBLAS=ON \
+            -DUSE_CUTLASS=ON \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+
+      - name: Install MLC Python Package & Set Env
+        shell: bash -l {0}
+        run: |
+          pip install -e python
+          
+          # Setup paths for local runner
+          echo "TVM_HOME=$GITHUB_WORKSPACE/3rdparty/tvm" >> $GITHUB_ENV
+          echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$GITHUB_WORKSPACE/3rdparty/tvm/python:$PYTHONPATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build:$GITHUB_WORKSPACE/3rdparty/tvm/build:/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+          # Ensure local bin is in path
+          echo "$(python -m site --user-base)/bin" >> $GITHUB_PATH
+
+      - name: Verify GPU Access
+        shell: bash -l {0}
+        run: |
+          # 1. Verify TVM can see the A10G
+          python -c "import tvm; from tvm import cuda; print('Checking GPU...'); print('Is CUDA enabled in TVM?', cuda(0).exist)"
+          
+          # 2. Check MLC CLI
+          mlc_llm chat --help
