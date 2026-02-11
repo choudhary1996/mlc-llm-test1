@@ -1,40 +1,40 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/opt/venv/bin:/root/.cargo/bin:${PATH}"
+ENV PATH="/opt/conda/bin:${PATH}"
 
 # -------------------------------------------------
-# Install system dependencies
+# Install system basics
 # -------------------------------------------------
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
     curl \
     ca-certificates \
-    python3 \
-    python3-dev \
-    python3-venv \
-    llvm-dev \
-    clang \
-    cmake \
-    rustc \
-    cargo \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------
-# Create Python virtual environment (REQUIRED)
+# Install Miniconda
 # -------------------------------------------------
-RUN python3 -m venv /opt/venv
-
-# Upgrade pip inside venv
-RUN pip install --upgrade pip
-
-# Install Python build dependencies
-RUN pip install \
-    numpy scipy psutil decorator attrs cloudpickle wheel
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
+    bash miniconda.sh -b -p /opt/conda && \
+    rm miniconda.sh
 
 # -------------------------------------------------
-# Clone MLC-LLM with submodules
+# Create conda environment (MATCHES YOUR CI)
+# -------------------------------------------------
+RUN conda create -y -n mlc-chat-venv -c conda-forge \
+    python=3.13 \
+    "cmake>=3.24" \
+    rust \
+    git \
+    numpy scipy psutil decorator attrs cloudpickle
+
+ENV PATH="/opt/conda/envs/mlc-chat-venv/bin:${PATH}"
+
+# -------------------------------------------------
+# Clone MLC-LLM
 # -------------------------------------------------
 WORKDIR /opt
 RUN git clone --recursive --depth 1 https://github.com/mlc-ai/mlc-llm.git
@@ -65,12 +65,12 @@ RUN mkdir -p build && cd build && \
     make -j4
 
 # -------------------------------------------------
-# Install Python package inside venv
+# Install Python package
 # -------------------------------------------------
 RUN pip install -e python
 
 # -------------------------------------------------
-# Runtime environment variables
+# Runtime environment
 # -------------------------------------------------
 ENV TVM_HOME=/opt/mlc-llm/3rdparty/tvm
 ENV PYTHONPATH=/opt/mlc-llm/python:/opt/mlc-llm/3rdparty/tvm/python
