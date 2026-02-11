@@ -1,33 +1,67 @@
-# Filename: Dockerfile
+# -------------------------------------------------
+# MLC-LLM CPU Build Dockerfile (CI Stable)
+# -------------------------------------------------
+
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TVM_HOME=/opt/tvm
-ENV LD_LIBRARY_PATH=$TVM_HOME/build:$LD_LIBRARY_PATH
-ENV PYTHONPATH=$TVM_HOME/python
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install core dependencies
+# -------------------------------------------------
+# Install system dependencies
+# -------------------------------------------------
 RUN apt-get update && apt-get install -y \
-    build-essential cmake git python3 python3-dev python3-pip \
-    llvm-15-dev libxml2-dev libedit-dev libncurses5-dev clang-15 \
-    curl wget && rm -rf /var/lib/apt/lists/*
+    build-essential \
+    git \
+    curl \
+    ca-certificates \
+    python3 \
+    python3-dev \
+    python3-pip \
+    llvm-15 \
+    llvm-15-dev \
+    clang-15 \
+    libxml2-dev \
+    libedit-dev \
+    libncurses5-dev \
+    && rm -rf /var/lib/apt/lists/*
 
+# -------------------------------------------------
+# Install CMake >= 3.24 (Ubuntu default is too old)
+# -------------------------------------------------
+RUN pip3 install --no-cache-dir cmake
+
+# -------------------------------------------------
+# Install Rust (Required for tokenizer build)
+# -------------------------------------------------
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+
+# -------------------------------------------------
+# Clone MLC-LLM with submodules (includes TVM runtime)
+# -------------------------------------------------
 WORKDIR /opt
+RUN git clone --recursive --depth 1 https://github.com/mlc-ai/mlc-llm.git
 
-# FIXED: Full URL for Apache TVM (TVM Unity)
-RUN git clone --recursive https://github.com/apache/tvm.git tvm && \
-    cd tvm && mkdir build && cd build && \
-    cp ../cmake/config.cmake . && \
-    echo "set(USE_LLVM \"llvm-config-15 --ignore-libllvm --link-static\")" >> config.cmake && \
-    echo "set(HIDE_PRIVATE_SYMBOLS ON)" >> config.cmake && \
-    echo "set(USE_CUDA OFF)" >> config.cmake && \
-    cmake .. && make -j$(nproc) && \
-    # Properly install python bindings to avoid FFI errors
-    cd ../python && pip3 install -e .
+WORKDIR /opt/mlc-llm
 
-# Install dependencies for MLC-LLM
-RUN pip3 install --upgrade pip setuptools wheel \
-    numpy decorator scipy attrs tornado psutil
+# -------------------------------------------------
+# Configure and build (CPU-only for CI stability)
+# -------------------------------------------------
+RUN mkdir -p build && cd build && \
+    python3 ../cmake/gen_cmake_config.py --use-cuda=OFF && \
+    cmake .. && \
+    make -j4
 
-# FIXED: Full URL for MLC-LLM repository
-RUN git clone --recursive 
+# -------------------------------------------------
+# Install Python package
+# -------------------------------------------------
+WORKDIR /opt/mlc-llm/python
+RUN pip3 install --no-cache-dir -e .
+
+# -------------------------------------------------
+# Validate installation (CI safety check)
+# -------------------------------------------------
+RUN ls -l /opt/mlc-llm/build && \
+    python3 -c "import mlc_llm; print('MLC installed at:', mlc_llm.__file__)"
+
+WORKDIR /workspace
