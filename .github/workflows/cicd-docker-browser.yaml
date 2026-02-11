@@ -3,6 +3,7 @@ on:
   push:
     tags: ['v*'] # Triggers on version tags (e.g., v1.0.0)
   pull_request:
+  workflow_dispatch: 
 
 env:
   REGISTRY: ghcr.io
