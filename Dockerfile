@@ -1,76 +1,41 @@
+# -------------------------------------------------
+# MLC-LLM Runtime Image (No Compilation)
+# -------------------------------------------------
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/opt/conda/bin:${PATH}"
 
 # -------------------------------------------------
-# Install system basics
+# Install minimal runtime dependencies
 # -------------------------------------------------
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    git \
-    curl \
+    python3 \
+    python3-pip \
+    libstdc++6 \
     ca-certificates \
-    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------
-# Install Miniconda
+# Set working directory
 # -------------------------------------------------
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
-    bash miniconda.sh -b -p /opt/conda && \
-    rm miniconda.sh
-
-# -------------------------------------------------
-# Create conda environment (MATCHES YOUR CI)
-# -------------------------------------------------
-RUN conda create -y -n mlc-chat-venv -c conda-forge \
-    python=3.13 \
-    "cmake>=3.24" \
-    rust \
-    git \
-    numpy scipy psutil decorator attrs cloudpickle
-
-ENV PATH="/opt/conda/envs/mlc-chat-venv/bin:${PATH}"
-
-# -------------------------------------------------
-# Clone MLC-LLM
-# -------------------------------------------------
-WORKDIR /opt
-RUN git clone --recursive --depth 1 https://github.com/mlc-ai/mlc-llm.git
-
 WORKDIR /opt/mlc-llm
 
 # -------------------------------------------------
-# Build TVM (CPU only)
+# Copy prebuilt artifacts from CI
+# These MUST exist in build context
 # -------------------------------------------------
-RUN cd 3rdparty/tvm && \
-    mkdir -p build && cd build && \
-    cmake .. \
-      -DUSE_CUDA=OFF \
-      -DUSE_CUBLAS=OFF \
-      -DUSE_CUTLASS=OFF \
-      -DBUILD_SHARED_LIBS=ON && \
-    make -j4
+COPY build ./build
+COPY 3rdparty/tvm/build ./3rdparty/tvm/build
+COPY python ./python
 
 # -------------------------------------------------
-# Build MLC-LLM Core
+# Install Python package (CLI + bindings)
 # -------------------------------------------------
-RUN mkdir -p build && cd build && \
-    cmake .. \
-      -DUSE_CUDA=OFF \
-      -DUSE_CUBLAS=OFF \
-      -DUSE_CUTLASS=OFF \
-      -DBUILD_SHARED_LIBS=ON && \
-    make -j4
+RUN pip3 install --break-system-packages -e python
 
 # -------------------------------------------------
-# Install Python package
-# -------------------------------------------------
-RUN pip install -e python
-
-# -------------------------------------------------
-# Runtime environment
+# Runtime environment variables
 # -------------------------------------------------
 ENV TVM_HOME=/opt/mlc-llm/3rdparty/tvm
 ENV PYTHONPATH=/opt/mlc-llm/python:/opt/mlc-llm/3rdparty/tvm/python
