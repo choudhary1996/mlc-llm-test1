@@ -25,13 +25,13 @@ jobs:
           channels: conda-forge
           channel-priority: strict
 
-      - name: Install Build Dependencies
+      - name: Install All Potential Dependencies
         shell: powershell
         run: |
-          # Added the full set of libraries required by the Conda LLVM build
+          # This list covers all transitive dependencies of LLVM 18 on Windows
           conda install -n mlc-chat-venv -c conda-forge `
             "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja `
-            zlib libxml2 xz zstd pkg-config -y
+            zlib libxml2 xz zstd pkg-config bzip2 -y
 
       - name: Build TVM
         shell: powershell
@@ -42,6 +42,7 @@ jobs:
           
           $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
           
+          # Explicitly mapping every library filename to prevent LNK1181
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
@@ -49,9 +50,14 @@ jobs:
             -DUSE_LLVM=ON `
             -DBUILD_SHARED_LIBS=ON `
             -DCMAKE_PREFIX_PATH="$CONDA_LIB" `
-            -DLIBXML2_INCLUDE_DIR="$CONDA_LIB\include\libxml2" `
+            -DZLIB_LIBRARY="$CONDA_LIB\lib\zlib.lib" `
+            -DZLIB_INCLUDE_DIR="$CONDA_LIB\include" `
             -DLIBXML2_LIBRARY="$CONDA_LIB\lib\libxml2.lib" `
-            -DZLIB_ROOT="$CONDA_LIB"
+            -DLIBXML2_INCLUDE_DIR="$CONDA_LIB\include\libxml2" `
+            -DLZMA_LIBRARY="$CONDA_LIB\lib\liblzma.lib" `
+            -DLZMA_INCLUDE_DIR="$CONDA_LIB\include" `
+            -DZSTD_LIBRARY="$CONDA_LIB\lib\libzstd.lib" `
+            -DZSTD_INCLUDE_DIR="$CONDA_LIB\include"
           
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
@@ -60,9 +66,8 @@ jobs:
         run: |
           if (!(Test-Path build)) { mkdir build }
           cd build
-          
           $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
-
+          
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
@@ -74,7 +79,7 @@ jobs:
             
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      - name: Install MLC Python Package
+      - name: Install & Verify
         shell: powershell
         run: |
           python -m pip install -e "python"
@@ -85,21 +90,16 @@ jobs:
           "TVM_HOME=$tvm_path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PYTHONPATH=$mlc_path\python;$tvm_path\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           
-          # Adding DLL paths to GITHUB_PATH so Windows finds them during 'import'
+          # Add DLL folders to PATH for runtime import
           "$mlc_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "$tvm_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           
+          # Add Python Scripts folder for the mlc_llm CLI
           $python_bin = python -c "import sys; import os; print(os.path.join(sys.prefix, 'Scripts'))"
           "$python_bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Validate Installation
+      - name: Final Test
         shell: powershell
         run: |
-          Write-Host "Verifying DLL existence..."
-          Get-ChildItem -Path "build\Release\*.dll", "3rdparty\tvm\build\Release\*.dll" | Select-Object FullName
-
-          Write-Host "Testing Python Imports..."
-          python -c "import tvm; import mlc_llm; print('Success: TVM and MLC-LLM imported.')"
-
-          Write-Host "Testing CLI..."
+          python -c "import tvm; import mlc_llm; print('Build and Import Successful!')"
           mlc_llm chat --help
