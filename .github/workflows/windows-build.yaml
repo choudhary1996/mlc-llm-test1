@@ -25,58 +25,45 @@ jobs:
           channels: conda-forge
           channel-priority: strict
 
-      - name: Install All Potential Dependencies
+      - name: Install Dependencies
         shell: powershell
         run: |
-          # This list covers all transitive dependencies of LLVM 18 on Windows
           conda install -n mlc-chat-venv -c conda-forge `
-            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja `
-            zlib libxml2 xz zstd pkg-config bzip2 -y
+            "cmake>=3.24" ninja git `
+            numpy scipy psutil decorator attrs cloudpickle `
+            llvmdev=18 llvm=18 `
+            zlib libxml2 xz zstd pkg-config bzip2 `
+            rust -y
 
+      # --------------------------
+      # Build TVM
+      # --------------------------
       - name: Build TVM
         shell: powershell
         run: |
           cd 3rdparty/tvm
           if (!(Test-Path build)) { mkdir build }
           cd build
-          
-          $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
-          
-          # --- FIX: Patch libxml2 naming for LLVM linker ---
-          # LLVM config expects 'xml2.lib', but Conda provides 'libxml2.lib'.
-          # We create a copy to bridge this gap.
-          if (Test-Path "$CONDA_LIB\lib\libxml2.lib") {
-              Write-Host "Patching libxml2 library name for LLVM..."
-              Copy-Item "$CONDA_LIB\lib\libxml2.lib" "$CONDA_LIB\lib\xml2.lib" -Force
-          }
-          # -------------------------------------------------
-          
-          # Explicitly mapping every library filename to prevent LNK1181
+
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
             -DUSE_CUDA=OFF `
             -DUSE_LLVM=ON `
             -DBUILD_SHARED_LIBS=ON `
-            -DCMAKE_PREFIX_PATH="$CONDA_LIB" `
-            -DZLIB_LIBRARY="$CONDA_LIB\lib\zlib.lib" `
-            -DZLIB_INCLUDE_DIR="$CONDA_LIB\include" `
-            -DLIBXML2_LIBRARY="$CONDA_LIB\lib\libxml2.lib" `
-            -DLIBXML2_INCLUDE_DIR="$CONDA_LIB\include\libxml2" `
-            -DLZMA_LIBRARY="$CONDA_LIB\lib\liblzma.lib" `
-            -DLZMA_INCLUDE_DIR="$CONDA_LIB\include" `
-            -DZSTD_LIBRARY="$CONDA_LIB\lib\libzstd.lib" `
-            -DZSTD_INCLUDE_DIR="$CONDA_LIB\include"
-          
+            -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX"
+
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
+      # --------------------------
+      # Build MLC-LLM
+      # --------------------------
       - name: Build mlc-llm core
         shell: powershell
         run: |
           if (!(Test-Path build)) { mkdir build }
           cd build
-          $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
-          
+
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
@@ -84,29 +71,33 @@ jobs:
             -DUSE_CUDA=OFF `
             -DUSE_LLVM=ON `
             -DBUILD_SHARED_LIBS=ON `
-            -DCMAKE_PREFIX_PATH="$CONDA_LIB"
-            
+            -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX"
+
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
+      # --------------------------
+      # Install + Environment Setup
+      # --------------------------
       - name: Install & Verify
         shell: powershell
         run: |
           python -m pip install -e "python"
-          
+
           $tvm_path = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
           $mlc_path = "$env:GITHUB_WORKSPACE"
 
           "TVM_HOME=$tvm_path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PYTHONPATH=$mlc_path\python;$tvm_path\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          
-          # Add DLL folders to PATH for runtime import
+
           "$mlc_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "$tvm_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          
-          # Add Python Scripts folder for the mlc_llm CLI
-          $python_bin = python -c "import sys; import os; print(os.path.join(sys.prefix, 'Scripts'))"
+
+          $python_bin = python -c "import sys, os; print(os.path.join(sys.prefix, 'Scripts'))"
           "$python_bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
+      # --------------------------
+      # Final Test
+      # --------------------------
       - name: Final Test
         shell: powershell
         run: |
