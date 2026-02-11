@@ -1,0 +1,105 @@
+name: windows-debug2
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  Build-on-windows:
+    runs-on: windows-2022
+    timeout-minutes: 90 
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.13"
+          activate-environment: mlc-chat-venv
+          channels: conda-forge
+          channel-priority: strict
+
+      - name: Install All Dependencies
+        shell: powershell
+        run: |
+          # We include the full suite of LLVM dependencies to prevent transitive link errors
+          conda install -n mlc-chat-venv -c conda-forge `
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja `
+            zlib libxml2 xz zstd pkg-config bzip2 -y
+
+      - name: Build TVM
+        shell: powershell
+        run: |
+          cd 3rdparty/tvm
+          if (!(Test-Path build)) { mkdir build }
+          cd build
+          
+          $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
+          
+          # We explicitly point to the .lib files with their CONDA-SPECIFIC names
+          # Note: 'xml2.lib' is mapped to 'libxml2.lib' here
+          cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DUSE_CUDA=OFF `
+            -DUSE_LLVM=ON `
+            -DBUILD_SHARED_LIBS=ON `
+            -DCMAKE_PREFIX_PATH="$CONDA_LIB" `
+            -DZLIB_LIBRARY="$CONDA_LIB\lib\zlib.lib" `
+            -DZLIB_INCLUDE_DIR="$CONDA_LIB\include" `
+            -DLIBXML2_LIBRARY="$CONDA_LIB\lib\libxml2.lib" `
+            -DLIBXML2_INCLUDE_DIR="$CONDA_LIB\include\libxml2" `
+            -DLZMA_LIBRARY="$CONDA_LIB\lib\liblzma.lib" `
+            -DLZMA_INCLUDE_DIR="$CONDA_LIB\include" `
+            -DZSTD_LIBRARY="$CONDA_LIB\lib\libzstd.lib" `
+            -DZSTD_INCLUDE_DIR="$CONDA_LIB\include"
+          
+          cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Build mlc-llm core
+        shell: powershell
+        run: |
+          if (!(Test-Path build)) { mkdir build }
+          cd build
+          $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
+          
+          cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DTVM_SOURCE_DIR="$env:GITHUB_WORKSPACE\3rdparty\tvm" `
+            -DUSE_CUDA=OFF `
+            -DUSE_LLVM=ON `
+            -DBUILD_SHARED_LIBS=ON `
+            -DCMAKE_PREFIX_PATH="$CONDA_LIB"
+            
+          cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Install & Verify
+        shell: powershell
+        run: |
+          python -m pip install -e "python"
+          
+          $tvm_path = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
+          $mlc_path = "$env:GITHUB_WORKSPACE"
+
+          "TVM_HOME=$tvm_path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PYTHONPATH=$mlc_path\python;$tvm_path\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          
+          # Add DLL folders to PATH for runtime import
+          "$mlc_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$tvm_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          
+          # Add Python Scripts folder for the mlc_llm CLI
+          $python_bin = python -c "import sys; import os; print(os.path.join(sys.prefix, 'Scripts'))"
+          "$python_bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Final Validation
+        shell: powershell
+        run: |
+          python -c "import tvm; import mlc_llm; print('Build and Import Successful!')"
+          mlc_llm chat --help
