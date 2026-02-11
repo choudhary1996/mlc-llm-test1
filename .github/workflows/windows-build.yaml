@@ -42,6 +42,15 @@ jobs:
           
           $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
           
+          # --- FIX: Patch libxml2 naming for LLVM linker ---
+          # LLVM config expects 'xml2.lib', but Conda provides 'libxml2.lib'.
+          # We create a copy to bridge this gap.
+          if (Test-Path "$CONDA_LIB\lib\libxml2.lib") {
+              Write-Host "Patching libxml2 library name for LLVM..."
+              Copy-Item "$CONDA_LIB\lib\libxml2.lib" "$CONDA_LIB\lib\xml2.lib" -Force
+          }
+          # -------------------------------------------------
+          
           # Explicitly mapping every library filename to prevent LNK1181
           cmake .. `
             -G "Visual Studio 17 2022" `
