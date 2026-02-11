@@ -33,13 +33,31 @@ jobs:
             zlib libxml2 xz zstd pkg-config bzip2 -y
 
           # --- THE CRITICAL FIX ---
-          # LLVM demands 'xml2.lib', but Conda provides 'libxml2.lib'.
-          # We simply make a copy so both names exist.
-          $LIB_DIR = "$env:CONDA\envs\mlc-chat-venv\Library\lib"
-          Copy-Item "$LIB_DIR\libxml2.lib" -Destination "$LIB_DIR\xml2.lib" -Force
-          Copy-Item "$LIB_DIR\zlib.lib" -Destination "$LIB_DIR\z.lib" -Force
+          # Use CONDA_PREFIX provided by setup-miniconda instead of manual path construction.
+          Write-Host "Target Environment Path: $env:CONDA_PREFIX"
+          $LIB_DIR = "$env:CONDA_PREFIX\Library\lib"
           
-          Write-Host "Library fix applied: xml2.lib created."
+          # Verify directory exists before attempting copy
+          if (!(Test-Path "$LIB_DIR")) {
+            Write-Error "Library directory does not exist at: $LIB_DIR"
+            exit 1
+          }
+
+          # Copy libxml2.lib -> xml2.lib (LLVM expects xml2.lib)
+          if (Test-Path "$LIB_DIR\libxml2.lib") {
+              Copy-Item "$LIB_DIR\libxml2.lib" -Destination "$LIB_DIR\xml2.lib" -Force
+              Write-Host "Success: Copied libxml2.lib to xml2.lib"
+          } else {
+              Write-Warning "Could not find libxml2.lib in $LIB_DIR"
+              # List files to debug if it fails again
+              Get-ChildItem -Path "$LIB_DIR" -Filter "*xml*" | Select-Object Name
+          }
+
+          # Copy zlib.lib -> z.lib
+          if (Test-Path "$LIB_DIR\zlib.lib") {
+              Copy-Item "$LIB_DIR\zlib.lib" -Destination "$LIB_DIR\z.lib" -Force
+              Write-Host "Success: Copied zlib.lib to z.lib"
+          }
 
       - name: Build TVM
         shell: powershell
@@ -48,7 +66,8 @@ jobs:
           if (!(Test-Path build)) { mkdir build }
           cd build
           
-          $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
+          # Use dynamic path for TVM build config as well
+          $CONDA_LIB = "$env:CONDA_PREFIX\Library"
           
           cmake .. `
             -G "Visual Studio 17 2022" `
@@ -68,7 +87,8 @@ jobs:
           if (!(Test-Path build)) { mkdir build }
           cd build
           
-          $CONDA_LIB = "$env:CONDA\envs\mlc-chat-venv\Library"
+          # Use dynamic path
+          $CONDA_LIB = "$env:CONDA_PREFIX\Library"
           
           cmake .. `
             -G "Visual Studio 17 2022" `
@@ -90,8 +110,6 @@ jobs:
           $mlc_home = "$env:GITHUB_WORKSPACE"
           
           # --- FIX FOR 'No module named tvm_ffi' ---
-          # Recent TVM versions split FFI into a separate submodule.
-          # We must add '3rdparty/tvm/3rdparty/tvm-ffi/python' to PYTHONPATH.
           $ffi_python = "$tvm_home\3rdparty\tvm-ffi\python"
           $tvm_python = "$tvm_home\python"
           $mlc_python = "$mlc_home\python"
