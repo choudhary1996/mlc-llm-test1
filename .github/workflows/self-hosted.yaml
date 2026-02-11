@@ -18,33 +18,41 @@ jobs:
       - name: Clean and Prep Environment
         shell: bash
         run: |
-          # Use the full path to conda if it's not in your global PATH yet
-          # Usually: ~/miniconda3/bin/conda
+          # Ensure conda is initialized
+          source ~/miniconda3/etc/profile.d/conda.sh || source /home/ubuntu/miniconda3/etc/profile.d/conda.sh
+          
           conda env remove -n mlc-chat-venv -y || true
           conda create -n mlc-chat-venv python=3.13 -y
+          # Added llvmdev (Required for TVM)
           conda install -n mlc-chat-venv -c conda-forge -y \
-            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle
-
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18
+          
       - name: Build TVM (with CUDA 12.2)
         shell: bash
         run: |
-          # We source conda.sh to ensure 'conda activate' works in this shell
-          source $(conda info --base)/etc/profile.d/conda.sh
+          source ~/miniconda3/etc/profile.d/conda.sh || source /home/ubuntu/miniconda3/etc/profile.d/conda.sh
           conda activate mlc-chat-venv
           
           cd 3rdparty/tvm
           rm -rf build && mkdir build && cd build
+          
+          # Added USE_LLVM=ON and CUDA Architecture for A10G (86)
           cmake .. \
             -DUSE_CUDA=ON \
             -DUSE_CUBLAS=ON \
             -DUSE_CUTLASS=ON \
-            -DBUILD_SHARED_LIBS=ON
-          make -j 3
+            -DUSE_LLVM=ON \
+            -DUSE_CUDNN=OFF \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_CUDA_ARCHITECTURES=86
+            
+          # Using nproc-1 to leave some RAM for the OS during linking
+          make -j$(($(nproc)-1))
 
       - name: Build mlc-llm core
         shell: bash
         run: |
-          source $(conda info --base)/etc/profile.d/conda.sh
+          source ~/miniconda3/etc/profile.d/conda.sh || source /home/ubuntu/miniconda3/etc/profile.d/conda.sh
           conda activate mlc-chat-venv
           
           rm -rf build && mkdir build && cd build
@@ -52,18 +60,18 @@ jobs:
             -DUSE_CUDA=ON \
             -DUSE_CUBLAS=ON \
             -DUSE_CUTLASS=ON \
-            -DBUILD_SHARED_LIBS=ON
-          make -j 3
+            -DUSE_LLVM=ON \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_CUDA_ARCHITECTURES=86
+          make -j$(($(nproc)-1))
 
       - name: Install MLC Python Package & Set Env
         shell: bash
         run: |
-          source $(conda info --base)/etc/profile.d/conda.sh
+          source ~/miniconda3/etc/profile.d/conda.sh || source /home/ubuntu/miniconda3/etc/profile.d/conda.sh
           conda activate mlc-chat-venv
-          
           pip install -e python
           
-          # Persist variables for the Verify step
           echo "TVM_HOME=$GITHUB_WORKSPACE/3rdparty/tvm" >> $GITHUB_ENV
           echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$GITHUB_WORKSPACE/3rdparty/tvm/python:$PYTHONPATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build:$GITHUB_WORKSPACE/3rdparty/tvm/build:/usr/local/cuda-12.2/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
@@ -71,14 +79,7 @@ jobs:
       - name: Verify GPU and Installation
         shell: bash
         run: |
-          source $(conda info --base)/etc/profile.d/conda.sh
+          source ~/miniconda3/etc/profile.d/conda.sh || source /home/ubuntu/miniconda3/etc/profile.d/conda.sh
           conda activate mlc-chat-venv
-          
-          echo "--- Checking Hardware ---"
-          nvidia-smi
-          
-          echo "--- Verifying TVM ---"
           python -c "import tvm; from tvm import cuda; print('TVM Version:', tvm.__version__); print('CUDA Device 0 exists:', cuda(0).exist)"
-          
-          echo "--- Verifying MLC CLI ---"
           mlc_llm chat --help
