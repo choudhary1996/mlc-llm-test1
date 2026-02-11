@@ -9,12 +9,15 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy full repository (required for setup.py & version.py)
 WORKDIR /opt/mlc-llm
+COPY . .
 
+# Overwrite build artifacts with native-built ones
 COPY build ./build
 COPY 3rdparty/tvm/build ./3rdparty/tvm/build
-COPY python ./python
 
+# Install python package from repo root
 RUN pip3 install --break-system-packages -e python
 
 ENV TVM_HOME=/opt/mlc-llm/3rdparty/tvm
