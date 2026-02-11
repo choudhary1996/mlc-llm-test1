@@ -47,6 +47,7 @@ steps:
         llvmdev \
         python=3.13 \
         -y
+      echo "run" 
 
   # -----------------------------
   # Generate CMake config (non-interactive)
