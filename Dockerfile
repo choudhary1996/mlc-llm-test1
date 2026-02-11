@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/root/.cargo/bin:${PATH}"
+ENV PATH="/opt/venv/bin:/root/.cargo/bin:${PATH}"
 
 # -------------------------------------------------
 # Install system dependencies
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     python3 \
     python3-dev \
-    python3-pip \
+    python3-venv \
     llvm-dev \
     clang \
     cmake \
@@ -22,10 +22,16 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------
-# Install Python deps
+# Create Python virtual environment (REQUIRED)
 # -------------------------------------------------
-RUN pip3 install --no-cache-dir \
-    numpy scipy psutil decorator attrs cloudpickle
+RUN python3 -m venv /opt/venv
+
+# Upgrade pip inside venv
+RUN pip install --upgrade pip
+
+# Install Python build dependencies
+RUN pip install \
+    numpy scipy psutil decorator attrs cloudpickle wheel
 
 # -------------------------------------------------
 # Clone MLC-LLM with submodules
@@ -59,12 +65,12 @@ RUN mkdir -p build && cd build && \
     make -j4
 
 # -------------------------------------------------
-# Install Python Package
+# Install Python package inside venv
 # -------------------------------------------------
-RUN pip3 install -e python
+RUN pip install -e python
 
 # -------------------------------------------------
-# Set runtime environment
+# Runtime environment variables
 # -------------------------------------------------
 ENV TVM_HOME=/opt/mlc-llm/3rdparty/tvm
 ENV PYTHONPATH=/opt/mlc-llm/python:/opt/mlc-llm/3rdparty/tvm/python
