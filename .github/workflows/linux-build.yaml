@@ -1,137 +1,135 @@
 name: linux build
 
 on:
-push:
-branches:
-- main
-workflow_dispatch:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-Build-on-server:
-runs-on: ubuntu-24.04
+  build-on-server:
+    runs-on: ubuntu-24.04
 
+    steps:
+      # ---------------------------------
+      # Checkout repository (recursive)
+      # ---------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-steps:
-  # -----------------------------
-  # Checkout repository (recursive)
-  # -----------------------------
-  - name: Checkout repository
-    uses: actions/checkout@v4
-    with:
-      submodules: recursive
-      fetch-depth: 0
+      # ---------------------------------
+      # Setup Conda
+      # ---------------------------------
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.13"
+          activate-environment: mlc-chat-venv
+          channels: conda-forge
+          channel-priority: strict
 
-  # -----------------------------
-  # Setup Conda
-  # -----------------------------
-  - name: Setup Miniconda
-    uses: conda-incubator/setup-miniconda@v3
-    with:
-      auto-update-conda: true
-      python-version: 3.13
-      activate-environment: mlc-chat-venv
-      channels: conda-forge
-      channel-priority: strict
+      # ---------------------------------
+      # Recreate environment
+      # ---------------------------------
+      - name: Recreate environment
+        shell: bash -l {0}
+        run: |
+          conda env remove -n mlc-chat-venv || true
+          conda create -n mlc-chat-venv -c conda-forge \
+            "cmake>=3.24" \
+            rust \
+            git \
+            llvmdev \
+            python=3.13 \
+            -y
 
-  # -----------------------------
-  # Recreate Conda environment
-  # -----------------------------
-  - name: Recreate environment
-    shell: bash -l {0}
-    run: |
-      conda env remove -n mlc-chat-venv || true
-      conda create -n mlc-chat-venv -c conda-forge \
-        "cmake>=3.24" \
-        rust \
-        git \
-        llvmdev \
-        python=3.13 \
-        -y
-      echo "run" 
+      # ---------------------------------
+      # Generate CMake config
+      # ---------------------------------
+      - name: Generate CMake config
+        shell: bash -l {0}
+        run: |
+          { echo ""; yes n; } | python cmake/gen_cmake_config.py
 
-  # -----------------------------
-  # Generate CMake config (non-interactive)
-  # -----------------------------
-  - name: Generate CMake config
-    shell: bash -l {0}
-    run: |
-      { echo ""; yes n; } | python cmake/gen_cmake_config.py
+      # ---------------------------------
+      # Build TVM
+      # ---------------------------------
+      - name: Build TVM
+        shell: bash -l {0}
+        run: |
+          cd 3rdparty/tvm
+          rm -rf build
+          mkdir build
+          cd build
 
-  # -----------------------------
-  # Build TVM
-  # -----------------------------
-  - name: Build TVM
-    shell: bash -l {0}
-    run: |
-      cd 3rdparty/tvm
-      rm -rf build
-      mkdir build
-      cd build
+          cmake .. \
+            -DUSE_CUDA=OFF \
+            -DUSE_CUBLAS=OFF \
+            -DUSE_CUTLASS=OFF \
+            -DUSE_ROCM=OFF \
+            -DUSE_OPENCL=OFF \
+            -DBUILD_SHARED_LIBS=ON
 
-      cmake .. \
-        -DUSE_CUDA=OFF \
-        -DUSE_CUBLAS=OFF \
-        -DUSE_CUTLASS=OFF \
-        -DUSE_ROCM=OFF \
-        -DUSE_OPENCL=OFF \
-        -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
 
-      make -j$(nproc)
+      # ---------------------------------
+      # Install TVM Python package
+      # ---------------------------------
+      - name: Install TVM Python package
+        shell: bash -l {0}
+        run: |
+          cd 3rdparty/tvm/python
+          pip install -e .
 
-  # -----------------------------
-  # Install TVM Python bindings
-  # -----------------------------
-  - name: Install TVM Python package
-    shell: bash -l {0}
-    run: |
-      cd 3rdparty/tvm/python
-      pip install -e .
+      # ---------------------------------
+      # Build mlc-llm core
+      # ---------------------------------
+      - name: Build mlc-llm core
+        shell: bash -l {0}
+        run: |
+          rm -rf build
+          mkdir build
+          cd build
 
-  # -----------------------------
-  # Build mlc-llm core
-  # -----------------------------
-  - name: Build mlc-llm core
-    shell: bash -l {0}
-    run: |
-      rm -rf build
-      mkdir build
-      cd build
+          cmake .. \
+            -DUSE_CUDA=OFF \
+            -DUSE_CUBLAS=OFF \
+            -DUSE_CUTLASS=OFF \
+            -DBUILD_SHARED_LIBS=ON
 
-      cmake .. \
-        -DUSE_CUDA=OFF \
-        -DUSE_CUBLAS=OFF \
-        -DUSE_CUTLASS=OFF \
-        -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
 
-      make -j$(nproc)
+      # ---------------------------------
+      # Install mlc-llm Python package
+      # ---------------------------------
+      - name: Install mlc-llm Python package
+        shell: bash -l {0}
+        run: |
+          pip install -e python
 
-  # -----------------------------
-  # Install mlc-llm Python package
-  # -----------------------------
-  - name: Install MLC Python Package
-    shell: bash -l {0}
-    run: |
-      pip install -e python
+      # ---------------------------------
+      # Set runtime environment
+      # ---------------------------------
+      - name: Set runtime environment
+        run: |
+          echo "TVM_HOME=$GITHUB_WORKSPACE/3rdparty/tvm" >> $GITHUB_ENV
+          echo "TVM_LIBRARY_PATH=$GITHUB_WORKSPACE/3rdparty/tvm/build" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build:$GITHUB_WORKSPACE/3rdparty/tvm/build:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$GITHUB_WORKSPACE/3rdparty/tvm/python:$PYTHONPATH" >> $GITHUB_ENV
 
-  # -----------------------------
-  # Persist runtime environment
-  # -----------------------------
-  - name: Set runtime environment
-    run: |
-      echo "TVM_HOME=${{ github.workspace }}/3rdparty/tvm" >> $GITHUB_ENV
-      echo "TVM_LIBRARY_PATH=${{ github.workspace }}/3rdparty/tvm/build" >> $GITHUB_ENV
-      echo "LD_LIBRARY_PATH=${{ github.workspace }}/build:${{ github.workspace }}/3rdparty/tvm/build:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-      echo "PYTHONPATH=${{ github.workspace }}/python:${{ github.workspace }}/3rdparty/tvm/python:$PYTHONPATH" >> $GITHUB_ENV
+      # ---------------------------------
+      # Verify installation
+      # ---------------------------------
+      - name: Verify installation
+        shell: bash -l {0}
+        run: |
+          python - << 'EOF'
+          import tvm
+          print("TVM loaded OK, version:", tvm.__version__)
+          EOF
 
-  # -----------------------------
-  # Verify installation
-  # -----------------------------
-  - name: Verify installation
-    shell: bash -l {0}
-    run: |
-      python - << 'EOF'
-      import tvm
-      print("TVM loaded OK, version:", tvm.__version__)
-      EOF
-
-      mlc_llm chat -h
+          mlc_llm chat -h
