@@ -1,16 +1,20 @@
 name: chrome-browser
+
 on:
   push:
-    tags: ['v*'] # Triggers on version tags (e.g., v1.0.0)
+    tags: ['v*']
   pull_request:
-  workflow_dispatch: 
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Stage 1: Build & Push Multipurpose Docker Image
+
+  # -------------------------------------------------
+  # Stage 1: Build & Push Docker Image
+  # -------------------------------------------------
   build-docker:
     runs-on: ubuntu-latest
     permissions:
@@ -18,15 +22,17 @@ jobs:
       packages: write
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Extract Metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -40,73 +46,93 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
 
-  # Stage 2: Automated Tests (Gating Stage)
+  # -------------------------------------------------
+  # Stage 2: Runtime Validation (Container-based)
+  # -------------------------------------------------
   test:
     needs: build-docker
     runs-on: ubuntu-latest
     container:
       image: ${{ needs.build-docker.outputs.image_tag }}
+
     steps:
-      - uses: actions/checkout@v4
       - name: Validate CPU Runtime
         run: |
-          # 1. Verify library existence
-          ls -l /opt/tvm/build/libtvm.so
-          
-          # 2. Test FFI and CPU existence
-          python3 -c "import tvm; print('TVM Library:', tvm.base._LIB)"
-          python3 -c "import tvm; assert tvm.cpu().exist, 'CPU device not detected'"
-          
-          # 3. Test Relax (MLC Requirement)
-          python3 -c "from tvm import relax; print('Relax Module: OK')"
+          echo "Checking TVM library..."
+          ls -l /opt/mlc-llm/3rdparty/tvm/build/libtvm.so
 
-      - name: Build MLC-LLM Python Package
+          echo "Checking Python imports..."
+          python3 -c "import tvm; print('TVM loaded OK')"
+          python3 -c "import tvm; assert tvm.cpu().exist, 'CPU not detected'"
+          python3 -c "import mlc_llm; print('MLC loaded OK')"
+
+          echo "Checking Relax..."
+          python3 -c "from tvm import relax; print('Relax OK')"
+
+      - name: Build Linux Wheel (inside container)
         run: |
           cd /opt/mlc-llm/python
           python3 setup.py bdist_wheel --dist-dir /workspace/dist
 
+      - name: Upload Linux Wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-ubuntu
+          path: /workspace/dist/*.whl
 
-  # Stage 3: Build Wheels & Release
-  build-wheels:
+
+  # -------------------------------------------------
+  # Stage 3: Build Windows Wheel
+  # -------------------------------------------------
+  build-windows-wheel:
     needs: test
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Build Wheel
+      - name: Install Build Tools
         run: |
           pip install wheel
+
+      - name: Build Wheel
+        run: |
+          cd python
           python setup.py bdist_wheel --dist-dir dist
 
-      - name: Upload Artifacts
+      - name: Upload Windows Wheel
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
-          path: dist/*.whl
+          name: wheels-windows
+          path: python/dist/*.whl
 
+
+  # -------------------------------------------------
   # Stage 4: Publish Release
+  # -------------------------------------------------
   publish-release:
-    needs: build-wheels
+    needs: [test, build-windows-wheel]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: "wheels-*/*.whl"
+          files: |
+            wheels-ubuntu/*.whl
+            wheels-windows/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
