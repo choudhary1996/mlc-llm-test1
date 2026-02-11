@@ -10,13 +10,17 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      # ---------- Checkout ----------
+      # -------------------------------------------------
+      # Checkout
+      # -------------------------------------------------
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # ---------- Conda ----------
+      # -------------------------------------------------
+      # Conda
+      # -------------------------------------------------
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -26,14 +30,18 @@ jobs:
           channels: conda-forge
           channel-priority: strict
 
-      # ---------- Dependencies ----------
+      # -------------------------------------------------
+      # Dependencies
+      # -------------------------------------------------
       - name: Install Build Dependencies
         shell: powershell
         run: |
           conda install -n mlc-chat-venv -c conda-forge `
             "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle ninja -y
 
-      # ---------- CLEAN (fix cached bad config) ----------
+      # -------------------------------------------------
+      # Clean cached bad configs
+      # -------------------------------------------------
       - name: Clean previous builds/config
         shell: powershell
         run: |
@@ -41,7 +49,9 @@ jobs:
           Remove-Item -Recurse -Force 3rdparty\tvm\build -ErrorAction SilentlyContinue
           Remove-Item cmake\config.cmake -ErrorAction SilentlyContinue
 
-      # ---------- Generate config (correct TVM path) ----------
+      # -------------------------------------------------
+      # Generate config (correct TVM path)
+      # -------------------------------------------------
       - name: Generate CMake config
         shell: powershell
         run: |
@@ -56,7 +66,9 @@ n
 n
 "@ | python cmake/gen_cmake_config.py
 
-      # ---------- Build TVM ----------
+      # -------------------------------------------------
+      # Build TVM
+      # -------------------------------------------------
       - name: Build TVM
         shell: powershell
         run: |
@@ -78,7 +90,9 @@ n
 
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      # ---------- Build mlc-llm ----------
+      # -------------------------------------------------
+      # Build mlc-llm
+      # -------------------------------------------------
       - name: Build mlc-llm core
         shell: powershell
         run: |
@@ -99,11 +113,14 @@ n
 
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      # ---------- Install Python ----------
+      # -------------------------------------------------
+      # Install Python + deps
+      # -------------------------------------------------
       - name: Install MLC Python Package & Set Env
         shell: powershell
         run: |
-          pip install -e python
+          pip install --upgrade pip
+          pip install -e "python[serve]"
 
           $TVM_HOME="$env:GITHUB_WORKSPACE\3rdparty\tvm"
 
@@ -113,10 +130,20 @@ n
           # DLL lookup paths
           echo "PATH=$env:GITHUB_WORKSPACE\build\Release;$TVM_HOME\build\Release;$env:PATH" >> $env:GITHUB_ENV
 
-      # ---------- Verify ----------
-      - name: Verify Installation
-        shell: powershell
+      # -------------------------------------------------
+      # Validate build
+      # -------------------------------------------------
+      - name: Validate Installation
+        shell: bash -l {0}
         run: |
-          python -c "import tvm; print('TVM loaded OK, version:', tvm.__version__)"
-          python -c "import mlc_llm; print('MLC-LLM loaded OK')"
-          mlc_llm chat --help
+          conda activate mlc-chat-venv
+
+          echo "=== DLL check ==="
+          ls build/*.dll
+          ls 3rdparty/tvm/build/*.dll
+
+          echo "=== Python import test ==="
+          python -c "import tvm, tvm_ffi, mlc_llm; print('Imports OK')"
+
+          echo "=== CLI test ==="
+          mlc_llm chat -h
