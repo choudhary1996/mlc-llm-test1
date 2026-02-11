@@ -4,11 +4,11 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
-#home
+
 jobs:
   Build-and-Diagnose:
     runs-on: windows-2022
-    timeout-minutes: 90 
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repo
@@ -60,28 +60,22 @@ jobs:
           cmake .. -G "Visual Studio 17 2022" -A x64 -DUSE_CUDA=OFF -DUSE_LLVM=ON
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      - name: Diagnostic: Check Missing Symbols/Libs
+      - name: Diagnostic Step
         if: always()
         shell: powershell
         run: |
-          Write-Host "--- Environment Diagnostics ---"
-          conda list
           Write-Host "--- Checking for Compiled DLLs ---"
           Get-ChildItem -Path ".\**\*.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
-          Write-Host "--- Checking Conda Library Folder for .lib files ---"
+          Write-Host "--- Checking Conda Library Folder ---"
           $LIB_PATH = "$env:CONDA\envs\mlc-chat-venv\Library\lib"
-          if (Test-Path $LIB_PATH) {
-              ls $LIB_PATH\*.lib | Where-Object { $_.Name -match "xml2|zlib|zstd|lzma" }
-          }
+          if (Test-Path $LIB_PATH) { ls $LIB_PATH\*.lib | Where-Object { $_.Name -match "xml2|zlib|zstd|lzma" } }
 
       - name: Final Validation
         if: always()
         shell: powershell
         run: |
-          # The pipe character '|' above on line 66 (or equivalent) was likely missing
           $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\python;$env:GITHUB_WORKSPACE\3rdparty\tvm\python"
           $env:PATH = "$env:GITHUB_WORKSPACE\build\Release;$env:GITHUB_WORKSPACE\3rdparty\tvm\build\Release;$env:PATH"
-          
           Write-Host "--- Attempting Imports ---"
           python -c "import tvm; print('TVM Import Successful')"
           python -c "import mlc_llm; print('MLC Import Successful')"
