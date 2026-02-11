@@ -1,8 +1,4 @@
-# -------------------------------------------------
-# MLC-LLM CPU Build Dockerfile (CI Stable)
-# -------------------------------------------------
-
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
@@ -18,26 +14,21 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-dev \
     python3-pip \
-    llvm-15 \
-    llvm-15-dev \
-    clang-15 \
-    libxml2-dev \
-    libedit-dev \
-    libncurses5-dev \
+    llvm-dev \
+    clang \
+    cmake \
+    rustc \
+    cargo \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------
-# Install CMake >= 3.24 (Ubuntu default is too old)
+# Install Python deps
 # -------------------------------------------------
-RUN pip3 install --no-cache-dir cmake
+RUN pip3 install --no-cache-dir \
+    numpy scipy psutil decorator attrs cloudpickle
 
 # -------------------------------------------------
-# Install Rust (Required for tokenizer build)
-# -------------------------------------------------
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
-
-# -------------------------------------------------
-# Clone MLC-LLM with submodules (includes TVM runtime)
+# Clone MLC-LLM with submodules
 # -------------------------------------------------
 WORKDIR /opt
 RUN git clone --recursive --depth 1 https://github.com/mlc-ai/mlc-llm.git
@@ -45,23 +36,38 @@ RUN git clone --recursive --depth 1 https://github.com/mlc-ai/mlc-llm.git
 WORKDIR /opt/mlc-llm
 
 # -------------------------------------------------
-# Configure and build (CPU-only for CI stability)
+# Build TVM (CPU only)
 # -------------------------------------------------
-RUN mkdir -p build && cd build && \
-    python3 ../cmake/gen_cmake_config.py --use-cuda=OFF && \
-    cmake .. && \
+RUN cd 3rdparty/tvm && \
+    mkdir -p build && cd build && \
+    cmake .. \
+      -DUSE_CUDA=OFF \
+      -DUSE_CUBLAS=OFF \
+      -DUSE_CUTLASS=OFF \
+      -DBUILD_SHARED_LIBS=ON && \
     make -j4
 
 # -------------------------------------------------
-# Install Python package
+# Build MLC-LLM Core
 # -------------------------------------------------
-WORKDIR /opt/mlc-llm/python
-RUN pip3 install --no-cache-dir -e .
+RUN mkdir -p build && cd build && \
+    cmake .. \
+      -DUSE_CUDA=OFF \
+      -DUSE_CUBLAS=OFF \
+      -DUSE_CUTLASS=OFF \
+      -DBUILD_SHARED_LIBS=ON && \
+    make -j4
 
 # -------------------------------------------------
-# Validate installation (CI safety check)
+# Install Python Package
 # -------------------------------------------------
-RUN ls -l /opt/mlc-llm/build && \
-    python3 -c "import mlc_llm; print('MLC installed at:', mlc_llm.__file__)"
+RUN pip3 install -e python
+
+# -------------------------------------------------
+# Set runtime environment
+# -------------------------------------------------
+ENV TVM_HOME=/opt/mlc-llm/3rdparty/tvm
+ENV PYTHONPATH=/opt/mlc-llm/python:/opt/mlc-llm/3rdparty/tvm/python
+ENV LD_LIBRARY_PATH=/opt/mlc-llm/build:/opt/mlc-llm/3rdparty/tvm/build
 
 WORKDIR /workspace
