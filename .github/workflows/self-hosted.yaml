@@ -39,7 +39,7 @@ jobs:
             -DUSE_CUBLAS=ON \
             -DUSE_CUTLASS=ON \
             -DBUILD_SHARED_LIBS=ON
-          make -j$(nproc)
+          make -j 3
 
       - name: Build mlc-llm core
         shell: bash
@@ -53,7 +53,7 @@ jobs:
             -DUSE_CUBLAS=ON \
             -DUSE_CUTLASS=ON \
             -DBUILD_SHARED_LIBS=ON
-          make -j$(nproc)
+          make -j 3
 
       - name: Install MLC Python Package & Set Env
         shell: bash
