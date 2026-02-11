@@ -8,7 +8,6 @@ on:
 jobs:
   Build-on-windows:
     runs-on: windows-2022
-    # Standard Windows runners can be slow; giving it a generous timeout
     timeout-minutes: 90 
 
     steps:
@@ -29,27 +28,33 @@ jobs:
       - name: Install Build Dependencies
         shell: powershell
         run: |
+          # Added zlib and pkg-config to resolve the LLVM linker error
           conda install -n mlc-chat-venv -c conda-forge `
-            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja -y
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja `
+            zlib pkg-config -y
 
       - name: Build TVM
         shell: powershell
         run: |
           cd 3rdparty/tvm
-          mkdir build
+          if (!(Test-Path build)) { mkdir build }
           cd build
+          
+          # Added CMAKE_PREFIX_PATH so CMake looks in the Conda Library folder for zlib
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
             -DUSE_CUDA=OFF `
             -DUSE_LLVM=ON `
-            -DBUILD_SHARED_LIBS=ON
+            -DBUILD_SHARED_LIBS=ON `
+            -DCMAKE_PREFIX_PATH="$env:CONDA\envs\mlc-chat-venv\Library"
+          
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
       - name: Build mlc-llm core
         shell: powershell
         run: |
-          mkdir build
+          if (!(Test-Path build)) { mkdir build }
           cd build
           cmake .. `
             -G "Visual Studio 17 2022" `
@@ -57,27 +62,27 @@ jobs:
             -DTVM_SOURCE_DIR="$env:GITHUB_WORKSPACE\3rdparty\tvm" `
             -DUSE_CUDA=OFF `
             -DUSE_LLVM=ON `
-            -DBUILD_SHARED_LIBS=ON
+            -DBUILD_SHARED_LIBS=ON `
+            -DCMAKE_PREFIX_PATH="$env:CONDA\envs\mlc-chat-venv\Library"
+            
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
       - name: Install MLC Python Package
         shell: powershell
         run: |
-          # Install in editable mode
           python -m pip install -e "python"
           
           $tvm_path = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
           $mlc_path = "$env:GITHUB_WORKSPACE"
 
-          # 1. Set Environment Variables for subsequent steps
+          # Use UTF8 encoding for GITHUB_ENV/PATH to prevent Windows character issues
           "TVM_HOME=$tvm_path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PYTHONPATH=$mlc_path\python;$tvm_path\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           
-          # 2. Add DLL locations to PATH
+          # Add DLLs and Scripts to PATH
           "$mlc_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "$tvm_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           
-          # 3. Add Python Scripts folder to PATH (where mlc_llm.exe lives)
           $python_bin = python -c "import sys; import os; print(os.path.join(sys.prefix, 'Scripts'))"
           "$python_bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
@@ -85,8 +90,7 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Verifying DLLs..."
-          ls build\Release\*.dll
-          ls 3rdparty\tvm\build\Release\*.dll
+          Get-ChildItem -Path "build\Release\*.dll", "3rdparty\tvm\build\Release\*.dll" | Select-Object FullName
 
           Write-Host "Testing Python..."
           python -c "import tvm; import mlc_llm; print('Success: TVM and MLC-LLM imported.')"
