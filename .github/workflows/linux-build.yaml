@@ -10,7 +10,7 @@ jobs:
 Build-on-server:
 runs-on: ubuntu-24.04
 
-```
+
 steps:
   # -----------------------------
   # Checkout repository (recursive)
@@ -134,4 +134,3 @@ steps:
       EOF
 
       mlc_llm chat -h
-```
