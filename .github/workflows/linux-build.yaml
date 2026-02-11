@@ -34,7 +34,8 @@ jobs:
       - name: Generate CMake config
         shell: bash -l {0}
         run: |
-          printf "n\nn\nn\nn\nn\n" | python cmake/gen_cmake_config.py
+          printf "\n n\nn\nn\nn\nn\n" | python cmake/gen_cmake_config.py
+
 
       - name: Build TVM
         shell: bash -l {0}
