@@ -10,11 +10,13 @@ jobs:
     runs-on: windows-2022
 
     steps:
+      # ---------- Checkout ----------
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      # ---------- Conda ----------
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -24,40 +26,55 @@ jobs:
           channels: conda-forge
           channel-priority: strict
 
+      # ---------- Dependencies ----------
       - name: Install Build Dependencies
         shell: powershell
         run: |
           conda install -n mlc-chat-venv -c conda-forge `
-            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle -y
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle ninja -y
 
+      # ---------- CLEAN (fix cached bad config) ----------
+      - name: Clean previous builds/config
+        shell: powershell
+        run: |
+          Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force 3rdparty\tvm\build -ErrorAction SilentlyContinue
+          Remove-Item cmake\config.cmake -ErrorAction SilentlyContinue
+
+      # ---------- Generate config (correct TVM path) ----------
       - name: Generate CMake config
         shell: powershell
         run: |
-          @"
-          n
-          n
-          n
-          n
-          n
-          n
-          "@ | python cmake/gen_cmake_config.py
+          $tvm = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
 
-          
+          @"
+$tvm
+n
+n
+n
+n
+n
+"@ | python cmake/gen_cmake_config.py
 
       # ---------- Build TVM ----------
       - name: Build TVM
         shell: powershell
         run: |
           cd 3rdparty/tvm
-          mkdir build
+
+          if (!(Test-Path build)) {
+            mkdir build
+          }
+
           cd build
 
           cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
             -DUSE_CUDA=OFF `
             -DUSE_CUBLAS=OFF `
             -DUSE_CUTLASS=OFF `
-            -DBUILD_SHARED_LIBS=ON `
-            -G "Visual Studio 17 2022"
+            -DBUILD_SHARED_LIBS=ON
 
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
@@ -65,31 +82,36 @@ jobs:
       - name: Build mlc-llm core
         shell: powershell
         run: |
-          mkdir build
+          if (!(Test-Path build)) {
+            mkdir build
+          }
+
           cd build
 
           cmake .. `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DTVM_SOURCE_DIR="$env:GITHUB_WORKSPACE\3rdparty\tvm" `
             -DUSE_CUDA=OFF `
             -DUSE_CUBLAS=OFF `
             -DUSE_CUTLASS=OFF `
-            -DBUILD_SHARED_LIBS=ON `
-            -G "Visual Studio 17 2022"
+            -DBUILD_SHARED_LIBS=ON
 
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      # ---------- Install Python package ----------
+      # ---------- Install Python ----------
       - name: Install MLC Python Package & Set Env
         shell: powershell
         run: |
           pip install -e python
 
-          # Define paths
           $TVM_HOME="$env:GITHUB_WORKSPACE\3rdparty\tvm"
 
-          # Persist variables
           echo "TVM_HOME=$TVM_HOME" >> $env:GITHUB_ENV
           echo "PYTHONPATH=$env:GITHUB_WORKSPACE\python;$TVM_HOME\python;$env:PYTHONPATH" >> $env:GITHUB_ENV
-          echo "PATH=$env:GITHUB_WORKSPACE\build;$TVM_HOME\build\Release;$env:PATH" >> $env:GITHUB_ENV
+
+          # DLL lookup paths
+          echo "PATH=$env:GITHUB_WORKSPACE\build\Release;$TVM_HOME\build\Release;$env:PATH" >> $env:GITHUB_ENV
 
       # ---------- Verify ----------
       - name: Verify Installation
