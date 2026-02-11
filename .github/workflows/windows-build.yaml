@@ -8,6 +8,8 @@ on:
 jobs:
   Build-on-windows:
     runs-on: windows-2022
+    # Standard Windows runners can be slow; giving it a generous timeout
+    timeout-minutes: 90 
 
     steps:
       - name: Checkout repo
@@ -15,9 +17,6 @@ jobs:
         with:
           submodules: recursive
 
-      # -------------------------------------------------
-      # Conda
-      # -------------------------------------------------
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -27,120 +26,70 @@ jobs:
           channels: conda-forge
           channel-priority: strict
 
-      # -------------------------------------------------
-      # Dependencies
-      # -------------------------------------------------
       - name: Install Build Dependencies
         shell: powershell
         run: |
           conda install -n mlc-chat-venv -c conda-forge `
-            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle ninja -y
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle llvmdev=18 ninja -y
 
-      # -------------------------------------------------
-      # Clean cached bad configs
-      # -------------------------------------------------
-      - name: Clean previous builds/config
-        shell: powershell
-        run: |
-          Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force 3rdparty\tvm\build -ErrorAction SilentlyContinue
-          Remove-Item cmake\config.cmake -ErrorAction SilentlyContinue
-
-      # -------------------------------------------------
-      # Generate config (correct TVM path)
-      # -------------------------------------------------
-      - name: Generate CMake config
-        shell: powershell
-        run: |
-          $tvm = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
-
-          @"
-$tvm
-n
-n
-n
-n
-n
-"@ | python cmake/gen_cmake_config.py
-
-      # -------------------------------------------------
-      # Build TVM
-      # -------------------------------------------------
       - name: Build TVM
         shell: powershell
         run: |
           cd 3rdparty/tvm
-
-          if (!(Test-Path build)) {
-            mkdir build
-          }
-
+          mkdir build
           cd build
-
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
             -DUSE_CUDA=OFF `
-            -DUSE_CUBLAS=OFF `
-            -DUSE_CUTLASS=OFF `
+            -DUSE_LLVM=ON `
             -DBUILD_SHARED_LIBS=ON
-
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      # -------------------------------------------------
-      # Build mlc-llm
-      # -------------------------------------------------
       - name: Build mlc-llm core
         shell: powershell
         run: |
-          if (!(Test-Path build)) {
-            mkdir build
-          }
-
+          mkdir build
           cd build
-
           cmake .. `
             -G "Visual Studio 17 2022" `
             -A x64 `
             -DTVM_SOURCE_DIR="$env:GITHUB_WORKSPACE\3rdparty\tvm" `
             -DUSE_CUDA=OFF `
-            -DUSE_CUBLAS=OFF `
-            -DUSE_CUTLASS=OFF `
+            -DUSE_LLVM=ON `
             -DBUILD_SHARED_LIBS=ON
-
           cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
 
-      # -------------------------------------------------
-      # Install Python + deps
-      # -------------------------------------------------
-      - name: Install MLC Python Package & Set Env
+      - name: Install MLC Python Package
         shell: powershell
         run: |
-          pip install --upgrade pip
-          pip install -e "python[serve]"
+          # Install in editable mode
+          python -m pip install -e "python"
+          
+          $tvm_path = "$env:GITHUB_WORKSPACE\3rdparty\tvm"
+          $mlc_path = "$env:GITHUB_WORKSPACE"
 
-          $TVM_HOME="$env:GITHUB_WORKSPACE\3rdparty\tvm"
+          # 1. Set Environment Variables for subsequent steps
+          "TVM_HOME=$tvm_path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PYTHONPATH=$mlc_path\python;$tvm_path\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          
+          # 2. Add DLL locations to PATH
+          "$mlc_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$tvm_path\build\Release" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          
+          # 3. Add Python Scripts folder to PATH (where mlc_llm.exe lives)
+          $python_bin = python -c "import sys; import os; print(os.path.join(sys.prefix, 'Scripts'))"
+          "$python_bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-          echo "TVM_HOME=$TVM_HOME" >> $env:GITHUB_ENV
-          echo "PYTHONPATH=$env:GITHUB_WORKSPACE\python;$TVM_HOME\python;$env:PYTHONPATH" >> $env:GITHUB_ENV
-
-          # DLL lookup paths
-          echo "PATH=$env:GITHUB_WORKSPACE\build\Release;$TVM_HOME\build\Release;$env:PATH" >> $env:GITHUB_ENV
-
-      # -------------------------------------------------
-      # Validate build
-      # -------------------------------------------------
       - name: Validate Installation
-        shell: bash -l {0}
+        shell: powershell
         run: |
-          conda activate mlc-chat-venv
+          Write-Host "Verifying DLLs..."
+          ls build\Release\*.dll
+          ls 3rdparty\tvm\build\Release\*.dll
 
-          echo "=== DLL check ==="
-          ls build/*.dll
-          ls 3rdparty/tvm/build/*.dll
+          Write-Host "Testing Python..."
+          python -c "import tvm; import mlc_llm; print('Success: TVM and MLC-LLM imported.')"
 
-          echo "=== Python import test ==="
-          python -c "import tvm, tvm_ffi, mlc_llm; print('Imports OK')"
-
-          echo "=== CLI test ==="
-          mlc_llm chat -h
+          Write-Host "Testing CLI..."
+          mlc_llm chat --help
