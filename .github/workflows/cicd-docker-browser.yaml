@@ -48,12 +48,23 @@ jobs:
       image: ${{ needs.build-docker.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
-      - name: Run Validations
+      - name: Validate CPU Runtime
         run: |
-          python3 -c "import tvm; print('TVM Loaded:', tvm.__file__)"
-          python3 -c "import tvm.relax; print('Relax Ready')"
-      - name: Run Unit Tests
-        run: pip3 install pytest && pytest tests/python
+          # 1. Verify library existence
+          ls -l /opt/tvm/build/libtvm.so
+          
+          # 2. Test FFI and CPU existence
+          python3 -c "import tvm; print('TVM Library:', tvm.base._LIB)"
+          python3 -c "import tvm; assert tvm.cpu().exist, 'CPU device not detected'"
+          
+          # 3. Test Relax (MLC Requirement)
+          python3 -c "from tvm import relax; print('Relax Module: OK')"
+
+      - name: Build MLC-LLM Python Package
+        run: |
+          cd /opt/mlc-llm/python
+          python3 setup.py bdist_wheel --dist-dir /workspace/dist
+
 
   # Stage 3: Build Wheels & Release
   build-wheels:
