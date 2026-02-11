@@ -1,0 +1,92 @@
+name: windows build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  Build-on-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: "3.13"
+          activate-environment: mlc-chat-venv
+          channels: conda-forge
+          channel-priority: strict
+
+      - name: Install Build Dependencies
+        shell: powershell
+        run: |
+          conda install -n mlc-chat-venv -c conda-forge `
+            "cmake>=3.24" rust git numpy scipy psutil decorator attrs cloudpickle -y
+
+      - name: Generate CMake config
+        shell: powershell
+        run: |
+          $input = "`n`n`n`n`n`n"
+          $input | python cmake/gen_cmake_config.py
+
+      # ---------- Build TVM ----------
+      - name: Build TVM
+        shell: powershell
+        run: |
+          cd 3rdparty/tvm
+          mkdir build
+          cd build
+
+          cmake .. `
+            -DUSE_CUDA=OFF `
+            -DUSE_CUBLAS=OFF `
+            -DUSE_CUTLASS=OFF `
+            -DBUILD_SHARED_LIBS=ON `
+            -G "Visual Studio 17 2022"
+
+          cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      # ---------- Build mlc-llm ----------
+      - name: Build mlc-llm core
+        shell: powershell
+        run: |
+          mkdir build
+          cd build
+
+          cmake .. `
+            -DUSE_CUDA=OFF `
+            -DUSE_CUBLAS=OFF `
+            -DUSE_CUTLASS=OFF `
+            -DBUILD_SHARED_LIBS=ON `
+            -G "Visual Studio 17 2022"
+
+          cmake --build . --config Release --parallel $env:NUMBER_OF_PROCESSORS
+
+      # ---------- Install Python package ----------
+      - name: Install MLC Python Package & Set Env
+        shell: powershell
+        run: |
+          pip install -e python
+
+          # Define paths
+          $TVM_HOME="$env:GITHUB_WORKSPACE\3rdparty\tvm"
+
+          # Persist variables
+          echo "TVM_HOME=$TVM_HOME" >> $env:GITHUB_ENV
+          echo "PYTHONPATH=$env:GITHUB_WORKSPACE\python;$TVM_HOME\python;$env:PYTHONPATH" >> $env:GITHUB_ENV
+          echo "PATH=$env:GITHUB_WORKSPACE\build;$TVM_HOME\build\Release;$env:PATH" >> $env:GITHUB_ENV
+
+      # ---------- Verify ----------
+      - name: Verify Installation
+        shell: powershell
+        run: |
+          python -c "import tvm; print('TVM loaded OK, version:', tvm.__version__)"
+          python -c "import mlc_llm; print('MLC-LLM loaded OK')"
+          mlc_llm chat --help
