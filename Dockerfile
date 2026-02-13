@@ -2,18 +2,16 @@
 # ====================
 # Aligned with: https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
 #
-# Two usage patterns (best practice):
+# CI publishes "final" (build environment only). Mount repo to build:
+#   cd /path/to/mlc-llm && docker run --rm -v $(pwd):/workspace IMAGE
+#   docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
 #
-# 1. Vulkan image (tag: latest): PRE-BUILT — run without mounting repo
-#    docker run --rm IMAGE
-#    docker run -it --rm --entrypoint /bin/bash IMAGE   # then: mlc_llm chat -h
-#
-# 2. CUDA image (tag: latest-cuda) or when developing: BUILD ENVIRONMENT — mount repo
-#    cd /path/to/mlc-llm && docker run --rm -v $(pwd):/workspace IMAGE
-#    docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
+# Pre-built image (run without mount): build locally with
+#   git submodule update --init --recursive && docker build --target prebuilt -t myimg .
+#   docker run --rm myimg   or   docker run -it --rm --entrypoint /bin/bash myimg
 #
 # Build args: MLC_BACKEND=vulkan|cuda  PYTHON_VERSION=3.10
-# Targets: final (build-env only) | prebuilt (repo + build baked in; Vulkan only in CI)
+# Targets: final (default; build-env) | prebuilt (repo + build; local only)
 
 ARG BASE_IMAGE=ubuntu:22.04
 
