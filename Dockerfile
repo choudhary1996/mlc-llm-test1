@@ -1,13 +1,23 @@
-# MLC-LLM Docker Image
-# ====================
-# Aligned with: https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
+# MLC-LLM Multipurpose Docker Image
+# ===================================
+# Aligned with official "Build from Source" documentation:
+#   https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
 #
-# All code is inside the image. Run without mounting anything:
-#   docker run --rm IMAGE
-#   docker run -it --rm --entrypoint /bin/bash IMAGE   # then: mlc_llm chat -h
+# Steps: Step 1 (dependencies) → Step 2 (configure & build) → Step 3 (pip install) → Step 4 (validate)
 #
-# Build context must include submodules: git submodule update --init --recursive (CI uses submodules: recursive).
-# Build args: MLC_BACKEND=vulkan (default; built in image) | cuda (code in image, build at first run on CUDA host)
+# Serves as BOTH:
+#   1. Development environment (interactive shell, source mounted, dev tools)
+#   2. Build environment (non-interactive entrypoint for compile + validate)
+#
+# Usage (run from mlc-llm repo root so /workspace has CMakeLists.txt):
+#   Development (interactive; skip build script):
+#     docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
+#   Build (non-interactive; runs Step 2–4):
+#     docker run --rm -v $(pwd):/workspace IMAGE
+#
+# Build args:
+#   MLC_BACKEND: vulkan (default) | cuda   (per doc: Vulkan or CUDA >= 11.8)
+#   PYTHON_VERSION: 3.10 (default; doc also references 3.13)
 
 ARG BASE_IMAGE=ubuntu:22.04
 
@@ -131,20 +141,6 @@ echo "=============================================="
 
 cd /workspace
 
-if [[ ! -f CMakeLists.txt ]]; then
-  echo ""
-  echo "ERROR: /workspace does not contain CMakeLists.txt (mlc-llm repo root)."
-  echo ""
-  echo "This image expects the repo to be at /workspace. Either:"
-  echo "  1. Mount the repo from your host (run from repo root):"
-  echo "     cd /path/to/mlc-llm"
-  echo "     docker run --rm -v \$(pwd):/workspace IMAGE"
-  echo "  2. Or start a shell and mount later:"
-  echo "     docker run -it --rm --entrypoint /bin/bash -v /path/to/mlc-llm:/workspace IMAGE"
-  echo ""
-  exit 1
-fi
-
 # --- Step 2. Configure and build (per doc) ---
 echo ""
 echo "=== Step 2: Configure and build ==="
@@ -246,14 +242,6 @@ RUN echo 'source /usr/local/bin/dev-init.sh' >> /etc/bash.bashrc
 LABEL org.opencontainers.image.source="https://github.com/mlc-ai/mlc-llm"
 LABEL org.opencontainers.image.description="MLC-LLM Build from Source (Vulkan/CUDA)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
-
-# Copy repo into image (build context must have submodules)
-COPY . /workspace
-WORKDIR /workspace
-
-# Vulkan: build now (image has Vulkan). CUDA: skip (no nvcc in image; build when container runs on CUDA host)
-ENV NUM_THREADS=2
-RUN if [ "$MLC_BACKEND" = "vulkan" ]; then /usr/local/bin/build-entrypoint.sh; else echo "CUDA image: code in /workspace; run container to build on a CUDA host."; fi
 
 ENTRYPOINT ["/usr/local/bin/build-entrypoint.sh"]
 CMD []
