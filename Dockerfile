@@ -133,6 +133,20 @@ echo "=============================================="
 
 cd /workspace
 
+if [[ ! -f CMakeLists.txt ]]; then
+  echo ""
+  echo "ERROR: /workspace does not contain CMakeLists.txt (mlc-llm repo root)."
+  echo ""
+  echo "This image expects the repo to be at /workspace. Either:"
+  echo "  1. Mount the repo from your host (run from repo root):"
+  echo "     cd /path/to/mlc-llm"
+  echo "     docker run --rm -v \$(pwd):/workspace IMAGE"
+  echo "  2. Or start a shell and mount later:"
+  echo "     docker run -it --rm --entrypoint /bin/bash -v /path/to/mlc-llm:/workspace IMAGE"
+  echo ""
+  exit 1
+fi
+
 # --- Step 2. Configure and build (per doc) ---
 echo ""
 echo "=== Step 2: Configure and build ==="
