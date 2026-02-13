@@ -66,11 +66,13 @@ jobs:
             type=sha,prefix=,suffix=${{ matrix.tag_suffix }}
             type=raw,value=latest${{ matrix.tag_suffix }},enable={{is_default_branch}}
 
+      # CI builds "final" only (build-environment). Pre-built image = build locally with --target prebuilt
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
+          target: final
           push: ${{ github.event_name != 'pull_request' && github.event.inputs.push_image != 'false' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -84,7 +86,7 @@ jobs:
       - name: Test image
         run: |
           docker build -t mlc-llm-test:${{ matrix.backend }} \
-            --build-arg MLC_BACKEND=${{ matrix.backend }} .
+            --target final --build-arg MLC_BACKEND=${{ matrix.backend }} .
           docker run --rm --entrypoint /bin/bash mlc-llm-test:${{ matrix.backend }} -c \
             "python --version && cmake --version && rustc --version"
           docker run --rm --entrypoint /bin/bash mlc-llm-test:${{ matrix.backend }} -c \
@@ -97,8 +99,11 @@ jobs:
           echo "**Registry:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:** latest${{ matrix.tag_suffix }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Usage (from repo root)" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage (build environment — mount repo from repo root)" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "cd /path/to/mlc-llm" >> $GITHUB_STEP_SUMMARY
           echo "docker run --rm -v \$(pwd):/workspace ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${{ matrix.tag_suffix }}" >> $GITHUB_STEP_SUMMARY
           echo "docker run -it --rm --entrypoint /bin/bash -v \$(pwd):/workspace ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${{ matrix.tag_suffix }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pre-built (run without mount): build locally with \`docker build --target prebuilt .\` (requires \`git submodule update --init --recursive\`)." >> $GITHUB_STEP_SUMMARY
