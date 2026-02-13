@@ -1,30 +1,4 @@
-# MLC-LLM Multipurpose Docker Image
-# ===================================
-# Aligned with official "Build from Source" documentation:
-#   https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
-#
-# Steps: Step 1 (dependencies) → Step 2 (configure & build) → Step 3 (pip install) → Step 4 (validate)
-#
-# Serves as BOTH:
-#   1. Development environment (interactive shell, source mounted, dev tools)
-#   2. Build environment (non-interactive entrypoint for compile + validate)
-#
-# Usage (run from mlc-llm repo root so /workspace has CMakeLists.txt):
-#   Development (interactive; skip build script):
-#     docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
-#   Build (non-interactive; runs Step 2–4):
-#     docker run --rm -v $(pwd):/workspace IMAGE
-#
-# Build args:
-#   MLC_BACKEND: vulkan (default) | cuda   (per doc: Vulkan or CUDA >= 11.8)
-#   PYTHON_VERSION: 3.10 (default; doc also references 3.13)
-
 ARG BASE_IMAGE=ubuntu:22.04
-
-# =============================================================================
-# Step 1. Set up build dependency (per doc)
-# =============================================================================
-# Doc: CMake >= 3.24, Git, Rust/Cargo, one of CUDA | Metal | Vulkan
 FROM ${BASE_IMAGE} AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -35,7 +9,6 @@ ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# System deps: build-essential, ninja, git, Python, Rust/Cargo (Hugging Face tokenizer), Vulkan
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ninja-build \
@@ -70,20 +43,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
 
-# CMake >= 3.24 (per doc)
 RUN python -m pip install --upgrade pip setuptools wheel \
     && pip install "cmake>=3.24" ninja
 
-RUN echo "=== Step 1 verified ===" \
+RUN echo "package verified ===" \
     && cmake --version \
     && git --version \
     && rustc --version \
     && cargo --version \
     && python --version
 
-# =============================================================================
-# Dev tools + Python deps + TVM runtime
-# =============================================================================
+
 FROM base AS dev-deps
 
 RUN pip install \
@@ -97,15 +67,12 @@ RUN pip install \
     requests safetensors sentencepiece shortuuid tiktoken tqdm transformers uvicorn \
     && pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
-# TVM runtime required by mlc_llm Python package (per MLC wheels)
 RUN pip install --pre -U -f https://mlc.ai/wheels mlc-ai-nightly-cpu
 
-# =============================================================================
-# Final image: workspace, entrypoint, dev-init
-# =============================================================================
+
+#Final image
 FROM dev-deps AS final
 
-# Per doc: one of Vulkan | CUDA | Metal. We support vulkan (default) and cuda.
 ARG MLC_BACKEND=vulkan
 ENV MLC_BACKEND=${MLC_BACKEND}
 
@@ -118,11 +85,8 @@ ENV CCACHE_DIR=/ccache \
 
 RUN mkdir -p /ccache && chmod 777 /ccache
 
-# =============================================================================
-# Step 2–4: Build entrypoint (per doc; non-interactive config.cmake)
-# =============================================================================
-# Doc Step 2: mkdir build, python ../cmake/gen_cmake_config.py, cmake .. && make
-# We use config.cmake directly for non-interactive CI/Docker (gen_cmake_config.py is interactive).
+#Build entrypoint
+
 COPY <<'EOF' /usr/local/bin/build-entrypoint.sh
 #!/bin/bash
 set -eo pipefail
@@ -141,7 +105,7 @@ echo "=============================================="
 
 cd /workspace
 
-# --- Step 2. Configure and build (per doc) ---
+# Configure and build  ---
 echo ""
 echo "=== Step 2: Configure and build ==="
 mkdir -p build && cd build
@@ -171,14 +135,14 @@ cmake .. -G Ninja
 ninja -j ${NUM_THREADS}
 cd ..
 
-# --- Step 3. Install via Python (per doc) ---
+# --- Install via Python  ---
 echo ""
 echo "=== Step 3: Install via Python ==="
 cd python
 pip install -e . --no-deps
 cd ..
 
-# --- Step 4. Validate installation (per doc) ---
+# --- Validate installation ---
 echo ""
 echo "=== Step 4: Validate installation ==="
 echo "Expected: libmlc_llm.so and libtvm_runtime.so"
