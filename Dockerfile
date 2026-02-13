@@ -43,17 +43,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
 
+
 RUN python -m pip install --upgrade pip setuptools wheel \
     && pip install "cmake>=3.24" ninja
 
-RUN echo "package verified ===" \
+RUN echo "=== Step 1 verified ===" \
     && cmake --version \
     && git --version \
     && rustc --version \
     && cargo --version \
     && python --version
 
-
+# Dev tools/Python deps/TVM runtime
 FROM base AS dev-deps
 
 RUN pip install \
@@ -67,12 +68,13 @@ RUN pip install \
     requests safetensors sentencepiece shortuuid tiktoken tqdm transformers uvicorn \
     && pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
+# TVM runtime required by mlc_llm Python package
 RUN pip install --pre -U -f https://mlc.ai/wheels mlc-ai-nightly-cpu
 
-
-#Final image
+# Final image
 FROM dev-deps AS final
 
+# Per doc: one of Vulkan | CUDA | Metal. We support vulkan (default) and cuda.
 ARG MLC_BACKEND=vulkan
 ENV MLC_BACKEND=${MLC_BACKEND}
 
@@ -84,8 +86,6 @@ ENV CCACHE_DIR=/ccache \
     PATH="/usr/lib/ccache:${PATH}"
 
 RUN mkdir -p /ccache && chmod 777 /ccache
-
-#Build entrypoint
 
 COPY <<'EOF' /usr/local/bin/build-entrypoint.sh
 #!/bin/bash
@@ -105,12 +105,10 @@ echo "=============================================="
 
 cd /workspace
 
-# Configure and build  ---
 echo ""
 echo "=== Step 2: Configure and build ==="
 mkdir -p build && cd build
 
-# Non-interactive config (doc recommends gen_cmake_config.py for interactive use)
 cat > config.cmake << CMAKECFG
 set(TVM_SOURCE_DIR 3rdparty/tvm)
 set(CMAKE_BUILD_TYPE RelWithDebInfo)
@@ -135,14 +133,12 @@ cmake .. -G Ninja
 ninja -j ${NUM_THREADS}
 cd ..
 
-# --- Install via Python  ---
 echo ""
 echo "=== Step 3: Install via Python ==="
 cd python
 pip install -e . --no-deps
 cd ..
 
-# --- Validate installation ---
 echo ""
 echo "=== Step 4: Validate installation ==="
 echo "Expected: libmlc_llm.so and libtvm_runtime.so"
