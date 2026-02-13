@@ -1,12 +1,16 @@
+# Docker image build and push (GHCR)
+# Aligned with: https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
+# Build args: MLC_BACKEND = vulkan (default) | cuda per doc GPU runtimes
+
 name: Docker
 
 on:
   push:
     branches: [main]
-    paths: ['Dockerfile', '.dockerignore', '.github/workflows/docker.yaml'] #Add files according to need
+    paths: ['Dockerfile', '.dockerignore', '.github/workflows/docker.yaml']
   pull_request:
     branches: [main]
-    paths: ['Dockerfile', '.dockerignore', '.github/workflows/docker.yaml'] #Add files according to need
+    paths: ['Dockerfile', '.dockerignore', '.github/workflows/docker.yaml']
   workflow_dispatch:
     inputs:
       push_image:
@@ -95,6 +99,6 @@ jobs:
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "# Development" >> $GITHUB_STEP_SUMMARY
           echo "docker run -it --rm --entrypoint /bin/bash -v \$(pwd):/workspace ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${{ matrix.tag_suffix }}" >> $GITHUB_STEP_SUMMARY
-          echo "# Build " >> $GITHUB_STEP_SUMMARY
+          echo "# Build (Step 2-4)" >> $GITHUB_STEP_SUMMARY
           echo "docker run --rm -v \$(pwd):/workspace ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest${{ matrix.tag_suffix }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
