@@ -2,19 +2,14 @@
 # ====================
 # Aligned with: https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
 #
-# Image contains the repo and a pre-built mlc_llm — runs independently (no mount required).
-# Optional: mount your own repo with -v to build/develop your code.
+# Build environment: mount your repo and run build (Step 2–4) in the container.
 #
-# Usage:
-#   Run independently (pre-built; no mount):
-#     docker run --rm IMAGE                    # run build/validate (quick, no-op)
-#     docker run -it --rm --entrypoint /bin/bash IMAGE   # shell; mlc_llm chat -h works
-#   With your own repo (mount and build):
-#     docker run --rm -v $(pwd):/workspace IMAGE         # build + validate your code
-#     docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
+# Usage (run from repo root so /workspace has CMakeLists.txt):
+#   Build:  docker run --rm -v $(pwd):/workspace IMAGE
+#   Shell:  docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
+#   Then in shell: /usr/local/bin/build-entrypoint.sh  →  mlc_llm chat -h
 #
 # Build args: MLC_BACKEND=vulkan|cuda  PYTHON_VERSION=3.10
-# Build context must include submodules (git submodule update --init --recursive or CI checkout with submodules).
 
 ARG BASE_IMAGE=ubuntu:22.04
 
@@ -240,9 +235,6 @@ LABEL org.opencontainers.image.source="https://github.com/mlc-ai/mlc-llm"
 LABEL org.opencontainers.image.description="MLC-LLM Build from Source (Vulkan/CUDA)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Copy repo into image and build so container runs independently (no mount required)
-COPY . /workspace
-RUN /usr/local/bin/build-entrypoint.sh
-
 ENTRYPOINT ["/usr/local/bin/build-entrypoint.sh"]
 CMD []
+
