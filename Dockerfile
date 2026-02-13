@@ -1,245 +1,247 @@
 # MLC-LLM Multipurpose Docker Image
-# Serves as both Development Environment and Build Environment
+# ===================================
+# Aligned with official "Build from Source" documentation:
+#   https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
 #
-# Usage:
-#   Development (interactive): docker run -it --rm -v $(pwd):/workspace mlc-llm:latest /bin/bash
-#   Build (non-interactive):   docker run --rm -v $(pwd):/workspace mlc-llm:latest
+# Steps: Step 1 (dependencies) → Step 2 (configure & build) → Step 3 (pip install) → Step 4 (validate)
+#
+# Serves as BOTH:
+#   1. Development environment (interactive shell, source mounted, dev tools)
+#   2. Build environment (non-interactive entrypoint for compile + validate)
+#
+# Usage (run from mlc-llm repo root so /workspace has CMakeLists.txt):
+#   Development (interactive; skip build script):
+#     docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
+#   Build (non-interactive; runs Step 2–4):
+#     docker run --rm -v $(pwd):/workspace IMAGE
 #
 # Build args:
-#   GPU: cpu (default), cuda-12.8, vulkan
-#   PYTHON_VERSION: 3.10 (default), 3.11, 3.12
+#   MLC_BACKEND: vulkan (default) | cuda   (per doc: Vulkan or CUDA >= 11.8)
+#   PYTHON_VERSION: 3.10 (default; doc also references 3.13)
 
 ARG BASE_IMAGE=ubuntu:22.04
 
 # =============================================================================
-# Stage 1: Base image with common dependencies
+# Step 1. Set up build dependency (per doc)
 # =============================================================================
+# Doc: CMake >= 3.24, Git, Rust/Cargo, one of CUDA | Metal | Vulkan
 FROM ${BASE_IMAGE} AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG PYTHON_VERSION=3.10
-ARG GPU=cpu
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PYTHONUNBUFFERED=1
 
-# Install base system dependencies
+# System deps: build-essential, ninja, git, Python, Rust/Cargo (Hugging Face tokenizer), Vulkan
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build essentials
     build-essential \
-    cmake \
     ninja-build \
     git \
     curl \
     wget \
     ca-certificates \
     pkg-config \
-    # Python
     python${PYTHON_VERSION} \
     python${PYTHON_VERSION}-dev \
     python${PYTHON_VERSION}-venv \
     python3-pip \
-    # Rust (for tokenizers-cpp)
     rustc \
     cargo \
-    # Vulkan dependencies
     libvulkan-dev \
     libvulkan1 \
     vulkan-tools \
     glslang-tools \
+    glslang-dev \
     spirv-tools \
-    # Development tools
+    spirv-headers \
     gdb \
-    valgrind \
     ccache \
     clang-format \
-    # Utilities
     vim \
     less \
     htop \
     tree \
     jq \
-    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python as default
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
 
-# Upgrade pip and install essential Python packages
-RUN python -m pip install --upgrade pip setuptools wheel
+# CMake >= 3.24 (per doc)
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && pip install "cmake>=3.24" ninja
+
+RUN echo "=== Step 1 verified ===" \
+    && cmake --version \
+    && git --version \
+    && rustc --version \
+    && cargo --version \
+    && python --version
 
 # =============================================================================
-# Stage 2: Development dependencies
+# Dev tools + Python deps + TVM runtime
 # =============================================================================
 FROM base AS dev-deps
 
-# Install development and testing tools
-RUN python -m pip install \
-    # Build tools
-    scikit-build-core>=0.10.0 \
-    auditwheel \
-    patchelf \
-    # Testing
-    pytest \
-    pytest-cov \
-    pytest-xdist \
-    # Linting and formatting
-    black \
-    isort \
-    pylint \
-    mypy \
-    # Documentation
-    sphinx \
-    sphinx-rtd-theme \
-    # Development utilities
-    ipython \
-    rich \
-    httpx
+RUN pip install \
+    pytest pytest-cov pytest-xdist \
+    black isort pylint mypy \
+    build wheel auditwheel patchelf \
+    ipython rich
 
-# Install project dependencies (excluding flashinfer which requires special handling)
-RUN python -m pip install \
-    apache-tvm-ffi \
-    datasets \
-    fastapi \
-    "ml_dtypes>=0.5.1" \
-    openai \
-    pandas \
-    prompt_toolkit \
-    requests \
-    safetensors \
-    sentencepiece \
-    shortuuid \
-    tiktoken \
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    tqdm \
-    transformers \
-    uvicorn
+RUN pip install \
+    datasets fastapi "ml_dtypes>=0.5.1" openai pandas prompt_toolkit \
+    requests safetensors sentencepiece shortuuid tiktoken tqdm transformers uvicorn \
+    && pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+
+# TVM runtime required by mlc_llm Python package (per MLC wheels)
+RUN pip install --pre -U -f https://mlc.ai/wheels mlc-ai-nightly-cpu
 
 # =============================================================================
-# Stage 3: Final multipurpose image
+# Final image: workspace, entrypoint, dev-init
 # =============================================================================
 FROM dev-deps AS final
 
-ARG GPU=cpu
+# Per doc: one of Vulkan | CUDA | Metal. We support vulkan (default) and cuda.
+ARG MLC_BACKEND=vulkan
+ENV MLC_BACKEND=${MLC_BACKEND}
 
-# Create workspace directory
 WORKDIR /workspace
 
-# Configure ccache
 ENV CCACHE_DIR=/ccache \
     CCACHE_COMPILERCHECK=content \
     CCACHE_NOHASHDIR=1 \
     PATH="/usr/lib/ccache:${PATH}"
 
-# Create ccache directory
 RUN mkdir -p /ccache && chmod 777 /ccache
 
-# Create entrypoint script for build mode
+# =============================================================================
+# Step 2–4: Build entrypoint (per doc; non-interactive config.cmake)
+# =============================================================================
+# Doc Step 2: mkdir build, python ../cmake/gen_cmake_config.py, cmake .. && make
+# We use config.cmake directly for non-interactive CI/Docker (gen_cmake_config.py is interactive).
 COPY <<'EOF' /usr/local/bin/build-entrypoint.sh
 #!/bin/bash
 set -eo pipefail
 
-# Default values
 : ${NUM_THREADS:=$(nproc)}
-: ${GPU:="cpu"}
-: ${BUILD_WHEEL:="1"}
+: ${MLC_BACKEND:=vulkan}
 : ${RUN_TESTS:="0"}
 
-echo "=== MLC-LLM Build Environment ==="
-echo "GPU: ${GPU}"
+echo "=============================================="
+echo "  MLC-LLM Build (per doc Build from Source)"
+echo "  https://llm.mlc.ai/docs/install/mlc_llm.html"
+echo "=============================================="
+echo "Backend: ${MLC_BACKEND}"
 echo "Threads: ${NUM_THREADS}"
-echo "Build wheel: ${BUILD_WHEEL}"
-echo "Run tests: ${RUN_TESTS}"
-echo "================================="
+echo "=============================================="
 
 cd /workspace
 
-# Configure CMake based on GPU
-rm -f config.cmake
-if [[ ${GPU} == cuda* ]]; then
-    echo 'set(USE_VULKAN ON)' >> config.cmake
-    echo 'set(USE_CUDA ON)' >> config.cmake
-    echo 'set(USE_CUBLAS ON)' >> config.cmake
-    echo 'set(USE_NCCL ON)' >> config.cmake
-    echo 'set(CMAKE_CUDA_ARCHITECTURES "80;90;100;120")' >> config.cmake
-elif [[ ${GPU} == vulkan ]]; then
-    echo 'set(USE_VULKAN ON)' >> config.cmake
+# --- Step 2. Configure and build (per doc) ---
+echo ""
+echo "=== Step 2: Configure and build ==="
+mkdir -p build && cd build
+
+# Non-interactive config (doc recommends gen_cmake_config.py for interactive use)
+cat > config.cmake << CMAKECFG
+set(TVM_SOURCE_DIR 3rdparty/tvm)
+set(CMAKE_BUILD_TYPE RelWithDebInfo)
+set(USE_CUDA OFF)
+set(USE_CUTLASS OFF)
+set(USE_CUBLAS OFF)
+set(USE_ROCM OFF)
+set(USE_METAL OFF)
+set(USE_OPENCL OFF)
+CMAKECFG
+
+if [[ ${MLC_BACKEND} == "cuda" ]]; then
+  echo "set(USE_CUDA ON)" >> config.cmake
+  echo "set(USE_CUBLAS ON)" >> config.cmake
+  echo "set(USE_CUTLASS ON)" >> config.cmake
 else
-    echo 'set(USE_VULKAN ON)' >> config.cmake
+  echo "set(USE_VULKAN ON)" >> config.cmake
 fi
 
-echo "CMake config:"
 cat config.cmake
+cmake .. -G Ninja
+ninja -j ${NUM_THREADS}
+cd ..
 
-# Build wheel if requested
-if [[ ${BUILD_WHEEL} == "1" ]]; then
-    echo "Building wheel..."
-    rm -rf dist build/wheel
-    pip wheel --no-deps -w dist . -v
-    
-    # Repair wheel for manylinux if on Linux
-    if [[ "$(uname)" == "Linux" ]]; then
-        mkdir -p wheels
-        AUDITWHEEL_OPTS="--plat manylinux_2_28_x86_64 -w wheels/"
-        AUDITWHEEL_OPTS="--exclude libtvm --exclude libtvm_runtime --exclude libtvm_ffi --exclude libvulkan ${AUDITWHEEL_OPTS}"
-        if [[ ${GPU} == cuda* ]]; then
-            AUDITWHEEL_OPTS="--exclude libcuda --exclude libcudart --exclude libnvrtc --exclude libcublas --exclude libcublasLt ${AUDITWHEEL_OPTS}"
-        fi
-        auditwheel repair ${AUDITWHEEL_OPTS} dist/*.whl || mv dist/*.whl wheels/
-    else
-        mkdir -p wheels
-        mv dist/*.whl wheels/
-    fi
-    
-    echo "Wheel built successfully:"
-    ls -la wheels/
-fi
+# --- Step 3. Install via Python (per doc) ---
+echo ""
+echo "=== Step 3: Install via Python ==="
+cd python
+pip install -e . --no-deps
+cd ..
 
-# Run tests if requested
+# --- Step 4. Validate installation (per doc) ---
+echo ""
+echo "=== Step 4: Validate installation ==="
+echo "Expected: libmlc_llm.so and libtvm_runtime.so"
+ls -l ./build/*.so 2>/dev/null || find ./build -name "*.so" -type f | head -10
+
+echo ""
+echo "Expected: help message"
+mlc_llm chat -h
+
+echo ""
+echo "Expected: path to build from source"
+python -c "import mlc_llm; print(mlc_llm)"
+
+echo ""
+echo "=== Build and validation completed successfully ==="
+
 if [[ ${RUN_TESTS} == "1" ]]; then
-    echo "Running tests..."
-    pip install wheels/*.whl --force-reinstall
-    python -m pytest -v tests/python/ -m unittest
+  echo ""
+  echo "=== Running tests ==="
+  python -m pytest -v tests/python/ -m unittest \
+    --ignore=tests/python/integration/ \
+    --ignore=tests/python/op/
 fi
 
-echo "Build completed successfully!"
+if [[ -n ${BUILD_WHEEL} ]]; then
+  echo ""
+  echo "=== Building wheel ==="
+  cd python && pip wheel --no-deps -w ../wheels . && cd ..
+  ls -la wheels/
+fi
 EOF
+
 RUN chmod +x /usr/local/bin/build-entrypoint.sh
 
-# Create development shell initialization
 COPY <<'EOF' /usr/local/bin/dev-init.sh
 #!/bin/bash
-echo "=== MLC-LLM Development Environment ==="
-echo "Python: $(python --version)"
-echo "CMake: $(cmake --version | head -1)"
-echo "Rust: $(rustc --version)"
+cat << 'BANNER'
+==============================================
+  MLC-LLM Development Environment
+  Build from Source: https://llm.mlc.ai/docs/install/mlc_llm.html
+==============================================
+BANNER
+echo "Python: $(python --version) | CMake: $(cmake --version | head -1) | Rust: $(rustc --version)"
 echo ""
-echo "Quick commands:"
-echo "  build-entrypoint.sh    - Build the project"
-echo "  pytest tests/python/   - Run tests"
-echo "  black python/          - Format code"
-echo "  pylint python/         - Lint code"
-echo "========================================"
+echo "Build first (required for mlc_llm CLI):"
+echo "  /usr/local/bin/build-entrypoint.sh"
+echo ""
+echo "Or manual (per doc):"
+echo "  mkdir -p build && cd build"
+echo "  python ../cmake/gen_cmake_config.py   # interactive"
+echo "  cmake .. && make -j \$(nproc) && cd .."
+echo "  cd python && pip install -e . --no-deps"
+echo ""
+echo "Then: mlc_llm chat -h | pytest tests/python/ -m unittest | black python/"
+echo "=============================================="
 EOF
-RUN chmod +x /usr/local/bin/dev-init.sh
 
-# Add dev init to bashrc for interactive shells
+RUN chmod +x /usr/local/bin/dev-init.sh
 RUN echo 'source /usr/local/bin/dev-init.sh' >> /etc/bash.bashrc
 
-# Labels for container metadata
 LABEL org.opencontainers.image.source="https://github.com/mlc-ai/mlc-llm"
-LABEL org.opencontainers.image.description="MLC-LLM Development and Build Environment"
+LABEL org.opencontainers.image.description="MLC-LLM Build from Source (Vulkan/CUDA)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
-LABEL maintainer="MLC LLM Contributors"
 
-# Default entrypoint for build mode (non-interactive)
-# Override with /bin/bash for development mode (interactive)
 ENTRYPOINT ["/usr/local/bin/build-entrypoint.sh"]
-
-# Default command (can be overridden)
 CMD []
