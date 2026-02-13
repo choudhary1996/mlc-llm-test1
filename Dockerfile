@@ -2,16 +2,12 @@
 # ====================
 # Aligned with: https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
 #
-# CI publishes "final" (build environment only). Mount repo to build:
-#   cd /path/to/mlc-llm && docker run --rm -v $(pwd):/workspace IMAGE
-#   docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
+# All code is inside the image. Run without mounting anything:
+#   docker run --rm IMAGE
+#   docker run -it --rm --entrypoint /bin/bash IMAGE   # then: mlc_llm chat -h
 #
-# Pre-built image (run without mount): build locally with
-#   git submodule update --init --recursive && docker build --target prebuilt -t myimg .
-#   docker run --rm myimg   or   docker run -it --rm --entrypoint /bin/bash myimg
-#
-# Build args: MLC_BACKEND=vulkan|cuda  PYTHON_VERSION=3.10
-# Targets: final (default; build-env) | prebuilt (repo + build; local only)
+# Build context must include submodules: git submodule update --init --recursive (CI uses submodules: recursive).
+# Build args: MLC_BACKEND=vulkan (default; built in image) | cuda (code in image, build at first run on CUDA host)
 
 ARG BASE_IMAGE=ubuntu:22.04
 
@@ -251,16 +247,13 @@ LABEL org.opencontainers.image.source="https://github.com/mlc-ai/mlc-llm"
 LABEL org.opencontainers.image.description="MLC-LLM Build from Source (Vulkan/CUDA)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-ENTRYPOINT ["/usr/local/bin/build-entrypoint.sh"]
-CMD []
-
-# =============================================================================
-# Prebuilt stage (Vulkan only): repo + build baked in — run without mount
-# Build with: --target prebuilt (requires context with submodules)
-# =============================================================================
-FROM final AS prebuilt
+# Copy repo into image (build context must have submodules)
 COPY . /workspace
 WORKDIR /workspace
-RUN test -d 3rdparty/tvm && test -n "$(ls -A 3rdparty/tvm 2>/dev/null)" || (echo "ERROR: 3rdparty/tvm missing or empty. Build context must include submodules (git submodule update --init --recursive)." && exit 1)
+
+# Vulkan: build now (image has Vulkan). CUDA: skip (no nvcc in image; build when container runs on CUDA host)
 ENV NUM_THREADS=2
-RUN /usr/local/bin/build-entrypoint.sh
+RUN if [ "$MLC_BACKEND" = "vulkan" ]; then /usr/local/bin/build-entrypoint.sh; else echo "CUDA image: code in /workspace; run container to build on a CUDA host."; fi
+
+ENTRYPOINT ["/usr/local/bin/build-entrypoint.sh"]
+CMD []
