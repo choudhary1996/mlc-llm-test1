@@ -1,52 +1,92 @@
-#!/bin/bash
-set -eo pipefail
+# =============================================================================
+# MLC-LLM Standalone Docker Image (Fixed)
+# =============================================================================
 
-: ${NUM_THREADS:=2}
-: ${MLC_BACKEND:=vulkan}
-
-echo "=============================================="
-echo "MLC-LLM Build (from source)"
-echo "Backend: ${MLC_BACKEND}"
-echo "Threads: ${NUM_THREADS}"
-echo "=============================================="
-
-cd /workspace
-
-# Safety check
-test -f CMakeLists.txt
+ARG BASE_IMAGE=ubuntu:22.04
 
 # -----------------------------------------------------------------------------
-# Configure
+# Base system + build dependencies
 # -----------------------------------------------------------------------------
-mkdir -p build && cd build
+FROM ${BASE_IMAGE} AS base
 
-cat > config.cmake <<CMAKECFG
-set(TVM_SOURCE_DIR 3rdparty/tvm)
-set(CMAKE_BUILD_TYPE RelWithDebInfo)
-set(USE_VULKAN ON)
-set(USE_CUDA OFF)
-CMAKECFG
+ARG DEBIAN_FRONTEND=noninteractive
 
-if [[ ${MLC_BACKEND} == "cuda" ]]; then
-  echo "set(USE_CUDA ON)" >> config.cmake
-  echo "set(USE_CUBLAS ON)" >> config.cmake
-  echo "set(USE_CUTLASS ON)" >> config.cmake
-fi
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-echo "=== CMake configure ==="
-cmake .. -G Ninja
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ninja-build \
+    git \
+    curl \
+    wget \
+    ca-certificates \
+    pkg-config \
+    python3 \
+    python3-dev \
+    python3-venv \
+    python3-pip \
+    rustc \
+    cargo \
+    libvulkan-dev \
+    libvulkan1 \
+    vulkan-tools \
+    glslang-tools \
+    spirv-tools \
+    llvm \
+    llvm-dev \
+    clang \
+    ccache \
+    && rm -rf /var/lib/apt/lists/*
 
-echo "=== Build ==="
-ninja -j ${NUM_THREADS}
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
-cd ..
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && pip install "cmake>=3.24" ninja
 
 # -----------------------------------------------------------------------------
-# Python install
+# Python runtime deps
 # -----------------------------------------------------------------------------
-cd python
-pip install -e . --no-deps
-cd ..
+FROM base AS dev
 
-echo "=== Build completed successfully ==="
-mlc_llm chat -h
+RUN pip install \
+    datasets fastapi "ml_dtypes>=0.5.1" openai pandas \
+    prompt_toolkit requests safetensors sentencepiece \
+    shortuuid tiktoken tqdm transformers uvicorn
+
+RUN pip install --pre -U -f https://mlc.ai/wheels mlc-ai-nightly-cpu
+
+# -----------------------------------------------------------------------------
+# Final image
+# -----------------------------------------------------------------------------
+FROM dev AS final
+
+ARG MLC_BACKEND=vulkan
+ENV MLC_BACKEND=${MLC_BACKEND}
+
+WORKDIR /workspace
+
+COPY . /workspace
+
+COPY build-entrypoint.sh /usr/local/bin/build-entrypoint.sh
+RUN chmod +x /usr/local/bin/build-entrypoint.sh
+
+RUN echo "=== Workspace contents ===" \
+ && ls -la /workspace \
+ && test -f /workspace/CMakeLists.txt
+
+ENV NUM_THREADS=2
+
+RUN if [ "$MLC_BACKEND" = "vulkan" ]; then \
+      echo "=== Building Vulkan backend ===" && \
+      /usr/local/bin/build-entrypoint.sh ; \
+    else \
+      echo "CUDA build deferred to runtime GPU host."; \
+    fi
+
+ENTRYPOINT ["mlc_llm"]
+CMD ["chat", "-h"]
+
+LABEL org.opencontainers.image.description="MLC-LLM Standalone Build (Vulkan/CUDA)"
