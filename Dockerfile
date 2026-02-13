@@ -2,14 +2,18 @@
 # ====================
 # Aligned with: https://llm.mlc.ai/docs/install/mlc_llm.html#option-2-build-from-source
 #
-# Build environment: mount your repo and run build (Step 2–4) in the container.
+# Two usage patterns (best practice):
 #
-# Usage (run from repo root so /workspace has CMakeLists.txt):
-#   Build:  docker run --rm -v $(pwd):/workspace IMAGE
-#   Shell:  docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
-#   Then in shell: /usr/local/bin/build-entrypoint.sh  →  mlc_llm chat -h
+# 1. Vulkan image (tag: latest): PRE-BUILT — run without mounting repo
+#    docker run --rm IMAGE
+#    docker run -it --rm --entrypoint /bin/bash IMAGE   # then: mlc_llm chat -h
+#
+# 2. CUDA image (tag: latest-cuda) or when developing: BUILD ENVIRONMENT — mount repo
+#    cd /path/to/mlc-llm && docker run --rm -v $(pwd):/workspace IMAGE
+#    docker run -it --rm --entrypoint /bin/bash -v $(pwd):/workspace IMAGE
 #
 # Build args: MLC_BACKEND=vulkan|cuda  PYTHON_VERSION=3.10
+# Targets: final (build-env only) | prebuilt (repo + build baked in; Vulkan only in CI)
 
 ARG BASE_IMAGE=ubuntu:22.04
 
@@ -252,3 +256,13 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 ENTRYPOINT ["/usr/local/bin/build-entrypoint.sh"]
 CMD []
 
+# =============================================================================
+# Prebuilt stage (Vulkan only): repo + build baked in — run without mount
+# Build with: --target prebuilt (requires context with submodules)
+# =============================================================================
+FROM final AS prebuilt
+COPY . /workspace
+WORKDIR /workspace
+RUN test -d 3rdparty/tvm && test -n "$(ls -A 3rdparty/tvm 2>/dev/null)" || (echo "ERROR: 3rdparty/tvm missing or empty. Build context must include submodules (git submodule update --init --recursive)." && exit 1)
+ENV NUM_THREADS=2
+RUN /usr/local/bin/build-entrypoint.sh
