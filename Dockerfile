@@ -1,111 +1,52 @@
-# =============================================================================
-# MLC-LLM Standalone Docker Image (CI-safe)
-# =============================================================================
+#!/bin/bash
+set -eo pipefail
 
-ARG BASE_IMAGE=ubuntu:22.04
+: ${NUM_THREADS:=2}
+: ${MLC_BACKEND:=vulkan}
 
-# -----------------------------------------------------------------------------
-# Base system + build deps
-# -----------------------------------------------------------------------------
-FROM ${BASE_IMAGE} AS base
+echo "=============================================="
+echo "MLC-LLM Build (from source)"
+echo "Backend: ${MLC_BACKEND}"
+echo "Threads: ${NUM_THREADS}"
+echo "=============================================="
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG PYTHON_VERSION=3.10
+cd /workspace
 
-ENV LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ninja-build \
-    git \
-    curl \
-    wget \
-    ca-certificates \
-    pkg-config \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-dev \
-    python${PYTHON_VERSION}-venv \
-    python3-pip \
-    rustc \
-    cargo \
-    libvulkan-dev \
-    libvulkan1 \
-    vulkan-tools \
-    glslang-tools \
-    spirv-tools \
-    spirv-headers \
-    llvm \
-    llvm-dev \
-    libllvm-dev \
-    libclang-dev \
-    clang \
-    ccache \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
-
-RUN python -m pip install --upgrade pip setuptools wheel \
-    && pip install "cmake>=3.24" ninja
+# Safety check
+test -f CMakeLists.txt
 
 # -----------------------------------------------------------------------------
-# Python + runtime deps
+# Configure
 # -----------------------------------------------------------------------------
-FROM base AS dev
+mkdir -p build && cd build
 
-RUN pip install \
-    datasets fastapi "ml_dtypes>=0.5.1" openai pandas \
-    prompt_toolkit requests safetensors sentencepiece \
-    shortuuid tiktoken tqdm transformers uvicorn
+cat > config.cmake <<CMAKECFG
+set(TVM_SOURCE_DIR 3rdparty/tvm)
+set(CMAKE_BUILD_TYPE RelWithDebInfo)
+set(USE_VULKAN ON)
+set(USE_CUDA OFF)
+CMAKECFG
 
-# TVM runtime
-RUN pip install --pre -U -f https://mlc.ai/wheels mlc-ai-nightly-cpu
+if [[ ${MLC_BACKEND} == "cuda" ]]; then
+  echo "set(USE_CUDA ON)" >> config.cmake
+  echo "set(USE_CUBLAS ON)" >> config.cmake
+  echo "set(USE_CUTLASS ON)" >> config.cmake
+fi
 
-# -----------------------------------------------------------------------------
-# Final image
-# -----------------------------------------------------------------------------
-FROM dev AS final
+echo "=== CMake configure ==="
+cmake .. -G Ninja
 
-ARG MLC_BACKEND=vulkan
-ENV MLC_BACKEND=${MLC_BACKEND}
+echo "=== Build ==="
+ninja -j ${NUM_THREADS}
 
-WORKDIR /workspace
-
-# Copy repo (must include submodules)
-COPY . /workspace
-
-# -----------------------------------------------------------------------------
-# Copy build script
-# -----------------------------------------------------------------------------
-COPY build-entrypoint.sh /usr/local/bin/build-entrypoint.sh
-RUN chmod +x /usr/local/bin/build-entrypoint.sh
+cd ..
 
 # -----------------------------------------------------------------------------
-# Verify repo exists (debug safety)
+# Python install
 # -----------------------------------------------------------------------------
-RUN echo "=== Workspace contents ===" \
- && ls -la /workspace \
- && test -f /workspace/CMakeLists.txt
+cd python
+pip install -e . --no-deps
+cd ..
 
-# -----------------------------------------------------------------------------
-# Limit threads for CI stability
-# -----------------------------------------------------------------------------
-ENV NUM_THREADS=2
-
-# -----------------------------------------------------------------------------
-# Build Vulkan backend at image build time
-# -----------------------------------------------------------------------------
-RUN if [ "$MLC_BACKEND" = "vulkan" ]; then \
-      echo "=== Building Vulkan backend ===" && \
-      /usr/local/bin/build-entrypoint.sh ; \
-    else \
-      echo "CUDA build deferred to runtime GPU host."; \
-    fi
-
-# -----------------------------------------------------------------------------
-# Runtime defaults (no rebuild on start)
-# -----------------------------------------------------------------------------
-ENTRYPOINT ["mlc_llm"]
-CMD ["chat", "-h"]
+echo "=== Build completed successfully ==="
+mlc_llm chat -h
